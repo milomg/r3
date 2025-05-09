@@ -1,9 +1,12 @@
 {
   "name": "r3",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
   "scripts": {
+    "build": "tsdown --dts src/index.ts",
     "test": "vitest",
     "bench": "vitest bench",
     "format": "prettier --write ."
@@ -14,6 +17,7 @@
   "packageManager": "pnpm@10.10.0",
   "devDependencies": {
     "prettier": "^3.5.3",
+    "tsdown": "^0.11.1",
     "typescript": "^5.8.3",
     "vitest": "^3.1.3"
   }

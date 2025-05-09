@@ -1,16 +1,16 @@
 interface Signal<T> {
   value: T;
   observers: Computed<unknown>[];
+  observerSlots: number[];
 }
 
 interface Computed<T> extends Signal<T> {
   height: number;
-  value: T;
   pushed: boolean;
   nextHeap: Computed<unknown>;
   prevHeap: Computed<unknown>;
-  observers: Computed<unknown>[];
   sources: (Computed<unknown> | Signal<unknown>)[];
+  sourceSlots: number[];
   state: number;
   fn: () => T;
 }
@@ -72,7 +72,9 @@ export function computed<T>(fn: () => T): Computed<T> {
     nextHeap: null as any,
     prevHeap: null as any,
     observers: [],
+    observerSlots: [],
     sources: [],
+    sourceSlots: [],
     state: 0,
     pushed: false,
     value: undefined as T,
@@ -89,6 +91,7 @@ export function signal<T>(v: T): Signal<T> {
   const self: Signal<T> = {
     value: v,
     observers: [],
+    observerSlots: [],
   };
   return self;
 }
@@ -113,14 +116,28 @@ function recompute(el: Computed<unknown>) {
 function link(el: Signal<unknown>) {
   if (!context) return;
   context.sources.push(el);
+  context.sourceSlots.push(el.observerSlots.length);
   el.observers.push(context);
+  el.observerSlots.push(context.sourceSlots.length - 1);
 }
 
 function cleanNode(el: Computed<unknown>) {
-  for (const s of el.sources) {
-    s.observers.splice(s.observers.indexOf(el), 1);
+  while (el.sources.length) {
+    const source = el.sources.pop()!,
+      index = el.sourceSlots.pop()!,
+      obs = source.observers;
+    if (obs && obs.length) {
+      const n = obs.pop()!,
+        s = source.observerSlots.pop()!;
+      if (index < obs.length) {
+        n.sourceSlots[s] = index;
+        obs[index] = n;
+        source.observerSlots[index] = s;
+      }
+    }
   }
   el.sources = [];
+  el.sourceSlots = [];
 }
 
 function updateIfNecessary(el: Computed<unknown>): void {
@@ -182,10 +199,13 @@ function markHeap() {
   if (markedHeap) return;
   markedHeap = true;
   for (let i = 0; i <= maxHeightInHeap; i++) {
-    let el = heap[i];
-    while (el) {
-      markNode(el);
-      el = el.nextHeap;
+    const head = heap[i];
+    if (head) {
+      let el = head;
+      do {
+        markNode(el);
+        el = el.nextHeap;
+      } while (el !== head);
     }
   }
 }
