@@ -22,10 +22,9 @@ const CLEAN = 0;
 let markedHeap = false;
 let context: Computed<unknown> | null = null;
 
-let maxHeightInHeap = 0;
-let heap: (Computed<unknown> | null)[] = [];
 let stabilizeHeight = 0;
-
+let maxHeightInHeap = 0;
+const heap: (Computed<unknown> | null)[] = [];
 for (let i = 0; i < 2010; i++) {
   heap[i] = null;
 }
@@ -36,7 +35,8 @@ export function increaseHeapSize(n: number) {
 }
 
 function insertIntoHeap(n: Computed<unknown>) {
-  markedHeap = false;
+  if (n.pushed) return;
+  n.pushed = true;
   const newHStart = heap[n.height];
   if (newHStart == null) {
     heap[n.height] = n;
@@ -46,7 +46,9 @@ function insertIntoHeap(n: Computed<unknown>) {
     newHStart.prevHeap = n;
     n.nextHeap = newHStart;
   }
-  if (n.height > maxHeightInHeap) maxHeightInHeap = n.height;
+  if (n.height > maxHeightInHeap) {
+    maxHeightInHeap = n.height;
+  }
 }
 
 function deleteFromHeap(n: Computed<unknown>) {
@@ -61,6 +63,7 @@ function deleteFromHeap(n: Computed<unknown>) {
   }
   n.prevHeap = n;
   n.nextHeap = n;
+  n.pushed = false;
 }
 
 export function computed<T>(fn: () => T): Computed<T> {
@@ -94,9 +97,17 @@ function recompute(el: Computed<unknown>) {
   const oldcontext = context;
   context = el;
   cleanNode(el);
+  deleteFromHeap(el);
   el.state = CLEAN;
-  el.value = el.fn();
+  const value = el.fn();
   context = oldcontext;
+  if (value !== el.value) {
+    el.value = value;
+    for (const o of el.observers) {
+      o.state = DIRTY;
+      insertIntoHeap(o);
+    }
+  }
 }
 
 function link(el: Signal<unknown>) {
@@ -125,7 +136,6 @@ function updateIfNecessary(el: Computed<unknown>): void {
   }
 
   if (el.state === DIRTY) {
-    deleteFromHeap(el);
     recompute(el);
   }
 
@@ -151,6 +161,7 @@ export function readComputed<T>(el: Computed<T>) {
 }
 
 export function setSignal(el: Signal<unknown>, v: unknown) {
+  markedHeap = false;
   if (el.value !== v) {
     el.value = v;
     for (const o of el.observers) {
@@ -185,22 +196,8 @@ export function stabilize() {
     stabilizeHeight <= maxHeightInHeap;
     stabilizeHeight++
   ) {
-    let el = heap[stabilizeHeight];
-    while (el) {
-      deleteFromHeap(el);
-      el.pushed = false;
-
+    for (let el = heap[stabilizeHeight]; el; el = heap[stabilizeHeight]) {
       recompute(el);
-
-      for (const o of el.observers) {
-        if (o.state != DIRTY) {
-          insertIntoHeap(o);
-          o.pushed = true;
-          if (o.height > maxHeightInHeap) maxHeightInHeap = o.height;
-        }
-      }
-
-      el = heap[stabilizeHeight];
     }
   }
 }
