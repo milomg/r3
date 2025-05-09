@@ -1,8 +1,7 @@
 import { expect, test } from "vitest";
 import {
   computed,
-  readComputed,
-  readSignal,
+  read,
   setSignal,
   signal,
   stabilize,
@@ -14,11 +13,11 @@ test("basic", () => {
   const s = signal(1);
   const a = computed(() => {
     aCount++;
-    return readSignal(s) + 1;
+    return read(s) + 1;
   });
   const b = computed(() => {
     bCount++;
-    return readComputed(a) + 1;
+    return read(a) + 1;
   });
   stabilize();
 
@@ -40,6 +39,26 @@ test("basic", () => {
   expect(bCount).toBe(2);
 });
 
+test("diamond", () => {
+  let callCount = 0;
+  const s = signal(1);
+  const a = computed(() => read(s)+1);
+  const b = computed(() => read(s)+2);
+  const c = computed(() => read(s)+3);
+  const d = computed(() => {
+    callCount++;
+    return read(a)*read(b)*read(c)
+  });
+  
+  stabilize();
+  expect(callCount).toBe(1);
+  expect(d.value).toBe(2*3*4);
+  setSignal(s,2);
+  stabilize();
+  expect(callCount).toBe(2)
+  expect(d.value).toBe(3*4*5);
+})
+
 test("dynamic sources recalculate correctly", () => {
   const a = signal(false);
   const b = signal(2);
@@ -47,7 +66,7 @@ test("dynamic sources recalculate correctly", () => {
 
   const c = computed(() => {
     count++;
-    readSignal(a) || readSignal(b);
+    read(a) || read(b);
   });
 
   stabilize();
@@ -85,7 +104,7 @@ test("dynamic source disappears entirely", () => {
     if (done) {
       return 0;
     } else {
-      const value = readSignal(s);
+      const value = read(s);
       if (value > 2) {
         done = true; // break the link between s and c
       }
@@ -125,19 +144,19 @@ test("small dynamic graph with signal grandparents", () => {
 
   const y = signal(0);
   const i = computed(() => {
-    let a = readSignal(y);
-    readSignal(z);
+    let a = read(y);
+    read(z);
     if (!a) {
-      return readSignal(x);
+      return read(x);
     } else {
       return a;
     }
   });
   const j = computed(() => {
-    let a = readComputed(i);
-    readSignal(z);
+    let a = read(i);
+    read(z);
     if (!a) {
-      return readSignal(x);
+      return read(x);
     } else {
       return a;
     }

@@ -1,10 +1,10 @@
-interface Signal<T> {
+export interface Signal<T> {
   value: T;
   observers: Computed<unknown>[];
   observerSlots: number[];
 }
 
-interface Computed<T> extends Signal<T> {
+export interface Computed<T> extends Signal<T> {
   height: number;
   pushed: boolean;
   nextHeap: Computed<unknown>;
@@ -113,14 +113,6 @@ function recompute(el: Computed<unknown>) {
   }
 }
 
-function link(el: Signal<unknown>) {
-  if (!context) return;
-  context.sources.push(el);
-  context.sourceSlots.push(el.observerSlots.length);
-  el.observers.push(context);
-  el.observerSlots.push(context.sourceSlots.length - 1);
-}
-
 function cleanNode(el: Computed<unknown>) {
   while (el.sources.length) {
     const source = el.sources.pop()!,
@@ -136,8 +128,6 @@ function cleanNode(el: Computed<unknown>) {
       }
     }
   }
-  el.sources = [];
-  el.sourceSlots = [];
 }
 
 function updateIfNecessary(el: Computed<unknown>): void {
@@ -159,19 +149,20 @@ function updateIfNecessary(el: Computed<unknown>): void {
   el.state = CLEAN;
 }
 
-export function readSignal<T>(el: Signal<T>) {
-  link(el);
-  return el.value;
-}
-export function readComputed<T>(el: Computed<T>) {
+export function read<T>(el: Signal<T> | Computed<T>): T {
   if (context) {
-    link(el);
-    if (el.height >= context.height) {
-      context.height = el.height + 1;
-    }
-    if (el.height >= stabilizeHeight) {
-      markHeap();
-      updateIfNecessary(el);
+    context.sources.push(el);
+    context.sourceSlots.push(el.observerSlots.length);
+    el.observers.push(context);
+    el.observerSlots.push(context.sourceSlots.length - 1);
+    if ("fn" in el) {
+      if (el.height >= context.height) {
+        context.height = el.height + 1;
+      }
+      if (el.height >= stabilizeHeight) {
+        markHeap();
+        updateIfNecessary(el);
+      }
     }
   }
   return el.value;
