@@ -24,13 +24,10 @@ let context: Computed<unknown> | null = null;
 
 let stabilizeHeight = 0;
 let maxHeightInHeap = 0;
-const heap: (Computed<unknown> | null)[] = [];
-for (let i = 0; i < 2010; i++) {
-  heap[i] = null;
-}
+const heap: (Computed<unknown> | null)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
-  for (let i = heap.length; i < n; i++) {
-    heap[i] = null;
+  if (n > heap.length) {
+    heap.length = n;
   }
 }
 
@@ -107,7 +104,9 @@ function recompute(el: Computed<unknown>) {
   if (value !== el.value) {
     el.value = value;
     for (const o of el.observers) {
-      o.state = DIRTY;
+      if (o.state == CHECK) {
+        o.state = DIRTY;
+      }
       insertIntoHeap(o);
     }
   }
@@ -159,7 +158,7 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
       if (el.height >= context.height) {
         context.height = el.height + 1;
       }
-      if (el.height >= stabilizeHeight) {
+      if (el.height >= stabilizeHeight || el.state > 0) {
         markHeap();
         updateIfNecessary(el);
       }
