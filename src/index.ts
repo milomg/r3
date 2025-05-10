@@ -1,30 +1,41 @@
+export const enum ReactiveFlags {
+  None = 0,
+  Check = 1 << 0,
+  Dirty = 1 << 1,
+  Pushed = 1 << 2,
+}
+
+export interface Link {
+  dep: Signal<unknown> | Computed<unknown>;
+  sub: Computed<unknown>;
+  prevDep: Link | undefined;
+  nextDep: Link | undefined;
+  prevSub: Link | undefined;
+  nextSub: Link | undefined;
+}
+
 export interface Signal<T> {
+  subs: Link | undefined;
+  subsTail: Link | undefined;
   value: T;
-  observers: Computed<unknown>[];
-  observerSlots: number[];
 }
 
 export interface Computed<T> extends Signal<T> {
+  deps: Link | undefined;
+  depsTail: Link | undefined;
+  flags: ReactiveFlags;
   height: number;
-  pushed: boolean;
   nextHeap: Computed<unknown>;
   prevHeap: Computed<unknown>;
-  sources: (Computed<unknown> | Signal<unknown>)[];
-  sourceSlots: number[];
-  state: number;
   fn: () => T;
 }
-
-const DIRTY = 2;
-const CHECK = 1;
-const CLEAN = 0;
 
 let markedHeap = false;
 let context: Computed<unknown> | null = null;
 
 let stabilizeHeight = 0;
 let maxHeightInHeap = 0;
-const heap: (Computed<unknown> | null)[] = new Array(2000);
+const heap: (Computed<unknown> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
   if (n > heap.length) {
     heap.length = n;
@@ -32,8 +43,8 @@ export function increaseHeapSize(n: number) {
 }
 
 function insertIntoHeap(n: Computed<unknown>) {
-  if (n.pushed) return;
-  n.pushed = true;
+  if (n.flags & ReactiveFlags.Pushed) return;
+  n.flags |= ReactiveFlags.Pushed;
   const newHStart = heap[n.height];
   if (newHStart == null) {
     heap[n.height] = n;
@@ -53,14 +64,14 @@ function deleteFromHeap(n: Computed<unknown>) {
     heap[n.height] = n.nextHeap;
   }
   if (heap[n.height] == n) {
-    heap[n.height] = null;
+    heap[n.height] = undefined;
   } else {
     n.prevHeap.nextHeap = n.nextHeap;
     n.nextHeap.prevHeap = n.prevHeap;
   }
   n.prevHeap = n;
   n.nextHeap = n;
-  n.pushed = false;
+  n.flags &= ~ReactiveFlags.Pushed;
 }
 
 export function computed<T>(fn: () => T): Computed<T> {
@@ -68,12 +79,11 @@ export function computed<T>(fn: () => T): Computed<T> {
     height: 0,
     nextHeap: null as any,
     prevHeap: null as any,
-    observers: [],
-    observerSlots: [],
-    sources: [],
-    sourceSlots: [],
-    state: 0,
-    pushed: false,
+    deps: undefined,
+    depsTail: undefined,
+    subs: undefined,
+    subsTail: undefined,
+    flags: ReactiveFlags.None,
     value: undefined as T,
     fn: fn,
   };
@@ -87,8 +97,8 @@ export function computed<T>(fn: () => T): Computed<T> {
 export function signal<T>(v: T): Signal<T> {
   const self: Signal<T> = {
     value: v,
-    observers: [],
-    observerSlots: [],
+    subs: undefined,
+    subsTail: undefined,
   };
   return self;
 }
@@ -96,69 +106,158 @@ export function signal<T>(v: T): Signal<T> {
 function recompute(el: Computed<unknown>) {
   const oldcontext = context;
   context = el;
-  cleanNode(el);
   deleteFromHeap(el);
-  el.state = CLEAN;
+  el.depsTail = undefined;
+  el.flags = ReactiveFlags.None;
   const value = el.fn();
+
+  const depsTail = el.depsTail as Link | undefined;
+  let toRemove = depsTail !== undefined ? depsTail.nextDep : el.deps;
+  while (toRemove !== undefined) {
+    toRemove = unlink(toRemove, el);
+  }
+
   context = oldcontext;
   if (value !== el.value) {
     el.value = value;
-    for (const o of el.observers) {
-      if (o.state == CHECK) {
-        o.state = DIRTY;
+
+    for (let s = el.subs; s; s = s.nextSub) {
+      const o = s.sub;
+      if (o.flags & ReactiveFlags.Check) {
+        o.flags |= ReactiveFlags.Dirty;
       }
       insertIntoHeap(o);
     }
   }
 }
 
-function cleanNode(el: Computed<unknown>) {
-  while (el.sources.length) {
-    const source = el.sources.pop()!,
-      index = el.sourceSlots.pop()!,
-      obs = source.observers;
-    if (obs && obs.length) {
-      const n = obs.pop()!,
-        s = source.observerSlots.pop()!;
-      if (index < obs.length) {
-        n.sourceSlots[s] = index;
-        obs[index] = n;
-        source.observerSlots[index] = s;
-      }
-    }
-  }
-}
-
 function updateIfNecessary(el: Computed<unknown>): void {
-  if (el.state === CHECK) {
-    for (const source of el.sources) {
-      if ("fn" in source) {
-        updateIfNecessary(source);
+  if (el.flags & ReactiveFlags.Check) {
+    for (let d = el.deps; d; d = d.nextDep) {
+      const dep = d.dep;
+      if ("fn" in dep) {
+        updateIfNecessary(dep)
       }
-      if ((el.state as number) === DIRTY) {
+      if (el.flags & ReactiveFlags.Dirty) {
         break;
       }
     }
   }
 
-  if (el.state === DIRTY) {
+  if (el.flags & ReactiveFlags.Dirty) {
     recompute(el);
   }
 
-  el.state = CLEAN;
+  el.flags = ReactiveFlags.None;
+}
+
+function unlink(link: Link, sub = link.sub): Link | undefined {
+  const dep = link.dep;
+  const prevDep = link.prevDep;
+  const nextDep = link.nextDep;
+  const nextSub = link.nextSub;
+  const prevSub = link.prevSub;
+  if (nextDep !== undefined) {
+    nextDep.prevDep = prevDep;
+  } else {
+    sub.depsTail = prevDep;
+  }
+  if (prevDep !== undefined) {
+    prevDep.nextDep = nextDep;
+  } else {
+    sub.deps = nextDep;
+  }
+  if (nextSub !== undefined) {
+    nextSub.prevSub = prevSub;
+  } else {
+    dep.subsTail = prevSub;
+  }
+  if (prevSub !== undefined) {
+    prevSub.nextSub = nextSub;
+  } else {
+    dep.subs = nextSub;
+  }
+  return nextDep;
+}
+
+function link(
+  dep: Signal<unknown> | Computed<unknown>,
+  sub: Computed<unknown>
+) {
+  const prevDep = sub.depsTail;
+  if (prevDep !== undefined && prevDep.dep === dep) {
+    return;
+  }
+  let nextDep: Link | undefined = undefined;
+  nextDep = prevDep !== undefined ? prevDep.nextDep : sub.deps;
+  if (nextDep !== undefined && nextDep.dep === dep) {
+    sub.depsTail = nextDep;
+    return;
+  }
+
+  const prevSub = dep.subsTail;
+  if (
+    prevSub !== undefined &&
+    prevSub.sub === sub &&
+    isValidLink(prevSub, sub)
+  ) {
+    return;
+  }
+  const newLink =
+    (sub.depsTail =
+    dep.subsTail =
+      {
+        dep,
+        sub,
+        prevDep,
+        nextDep,
+        prevSub,
+        nextSub: undefined,
+      });
+  if (nextDep !== undefined) {
+    nextDep.prevDep = newLink;
+  }
+  if (prevDep !== undefined) {
+    prevDep.nextDep = newLink;
+  } else {
+    sub.deps = newLink;
+  }
+  if (prevSub !== undefined) {
+    prevSub.nextSub = newLink;
+  } else {
+    dep.subs = newLink;
+  }
+}
+
+function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
+  const depsTail = sub.depsTail;
+  if (depsTail !== undefined) {
+    let link = sub.deps!;
+    do {
+      if (link === checkLink) {
+        return true;
+      }
+      if (link === depsTail) {
+        break;
+      }
+      link = link.nextDep!;
+    } while (link !== undefined);
+  }
+  return false;
 }
 
 export function read<T>(el: Signal<T> | Computed<T>): T {
   if (context) {
-    context.sources.push(el);
-    context.sourceSlots.push(el.observerSlots.length);
-    el.observers.push(context);
-    el.observerSlots.push(context.sourceSlots.length - 1);
+    link(el, context);
+
     if ("fn" in el) {
       if (el.height >= context.height) {
         context.height = el.height + 1;
       }
-      if (el.height >= stabilizeHeight || el.state > 0) {
+      if (
+        el.height >= stabilizeHeight ||
+        el.flags & (ReactiveFlags.Dirty | ReactiveFlags.Check)
+      ) {
         markHeap();
         updateIfNecessary(el);
       }
@@ -171,17 +270,26 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
   markedHeap = false;
   if (el.value !== v) {
     el.value = v;
-    for (const o of el.observers) {
-      insertIntoHeap(o);
+    let link = el.subs;
+    while (link) {
+      insertIntoHeap(link.sub);
+      link = link.nextSub;
     }
   }
 }
 
-function markNode(el: Computed<unknown>, newState = DIRTY) {
-  if (el.state > newState) return;
-  el.state = newState;
-  for (const s of el.observers) {
-    markNode(s, CHECK);
+function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
+  if ((el.flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) > newState)
+    return;
+  el.flags |= newState;
+
+  let link = el.subs;
+  while (link) {
+    const sub = link.sub;
+    if (isValidLink(link, sub)) {
+      markNode(sub, ReactiveFlags.Check);
+    }
+    link = link.nextSub;
   }
 }
 

@@ -78,10 +78,6 @@ test("dynamic sources recalculate correctly", () => {
 
   expect(count).toBe(2);
 
-  expect(c.sources.length).toBe(1);
-  expect(b.observers.length).toBe(0);
-
-
   setSignal(b, 4);
   stabilize();
 
