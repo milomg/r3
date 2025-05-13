@@ -8,21 +8,21 @@ export const enum ReactiveFlags {
 export interface Link {
   dep: Signal<unknown> | Computed<unknown>;
   sub: Computed<unknown>;
-  prevDep: Link | undefined;
-  nextDep: Link | undefined;
-  prevSub: Link | undefined;
-  nextSub: Link | undefined;
+  prevDep: Link | null;
+  nextDep: Link | null;
+  prevSub: Link | null;
+  nextSub: Link | null;
 }
 
 export interface Signal<T> {
-  subs: Link | undefined;
-  subsTail: Link | undefined;
+  subs: Link | null;
+  subsTail: Link | null;
   value: T;
 }
 
 export interface Computed<T> extends Signal<T> {
-  deps: Link | undefined;
-  depsTail: Link | undefined;
+  deps: Link | null;
+  depsTail: Link | null;
   flags: ReactiveFlags;
   height: number;
   nextHeap: Computed<unknown>;
@@ -82,10 +82,10 @@ export function computed<T>(fn: () => T): Computed<T> {
     height: 0,
     nextHeap: null as any,
     prevHeap: null as any,
-    deps: undefined,
-    depsTail: undefined,
-    subs: undefined,
-    subsTail: undefined,
+    deps: null,
+    depsTail: null,
+    subs: null,
+    subsTail: null,
     flags: ReactiveFlags.None,
     value: undefined as T,
     fn: fn,
@@ -100,8 +100,8 @@ export function computed<T>(fn: () => T): Computed<T> {
 export function signal<T>(v: T): Signal<T> {
   const self: Signal<T> = {
     value: v,
-    subs: undefined,
-    subsTail: undefined,
+    subs: null,
+    subsTail: null,
   };
   return self;
 }
@@ -110,13 +110,13 @@ function recompute(el: Computed<unknown>) {
   const oldcontext = context;
   context = el;
   deleteFromHeap(el);
-  el.depsTail = undefined;
+  el.depsTail = null;
   el.flags = ReactiveFlags.None;
   const value = el.fn();
 
-  const depsTail = el.depsTail as Link | undefined;
-  let toRemove = depsTail !== undefined ? depsTail.nextDep : el.deps;
-  while (toRemove !== undefined) {
+  const depsTail = el.depsTail as Link | null;
+  let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
+  while (toRemove !== null) {
     toRemove = unlink(toRemove, el);
   }
 
@@ -155,28 +155,28 @@ function updateIfNecessary(el: Computed<unknown>): void {
   el.flags = ReactiveFlags.None;
 }
 
-function unlink(link: Link, sub = link.sub): Link | undefined {
+function unlink(link: Link, sub = link.sub): Link | null {
   const dep = link.dep;
   const prevDep = link.prevDep;
   const nextDep = link.nextDep;
   const nextSub = link.nextSub;
   const prevSub = link.prevSub;
-  if (nextDep !== undefined) {
+  if (nextDep !== null) {
     nextDep.prevDep = prevDep;
   } else {
     sub.depsTail = prevDep;
   }
-  if (prevDep !== undefined) {
+  if (prevDep !== null) {
     prevDep.nextDep = nextDep;
   } else {
     sub.deps = nextDep;
   }
-  if (nextSub !== undefined) {
+  if (nextSub !== null) {
     nextSub.prevSub = prevSub;
   } else {
     dep.subsTail = prevSub;
   }
-  if (prevSub !== undefined) {
+  if (prevSub !== null) {
     prevSub.nextSub = nextSub;
   } else {
     dep.subs = nextSub;
@@ -189,19 +189,19 @@ function link(
   sub: Computed<unknown>
 ) {
   const prevDep = sub.depsTail;
-  if (prevDep !== undefined && prevDep.dep === dep) {
+  if (prevDep !== null && prevDep.dep === dep) {
     return;
   }
-  let nextDep: Link | undefined = undefined;
-  nextDep = prevDep !== undefined ? prevDep.nextDep : sub.deps;
-  if (nextDep !== undefined && nextDep.dep === dep) {
+  let nextDep: Link | null = null;
+  nextDep = prevDep !== null ? prevDep.nextDep : sub.deps;
+  if (nextDep !== null && nextDep.dep === dep) {
     sub.depsTail = nextDep;
     return;
   }
 
   const prevSub = dep.subsTail;
   if (
-    prevSub !== undefined &&
+    prevSub !== null &&
     prevSub.sub === sub &&
     isValidLink(prevSub, sub)
   ) {
@@ -216,17 +216,17 @@ function link(
         prevDep,
         nextDep,
         prevSub,
-        nextSub: undefined,
+        nextSub: null,
       });
-  if (nextDep !== undefined) {
+  if (nextDep !== null) {
     nextDep.prevDep = newLink;
   }
-  if (prevDep !== undefined) {
+  if (prevDep !== null) {
     prevDep.nextDep = newLink;
   } else {
     sub.deps = newLink;
   }
-  if (prevSub !== undefined) {
+  if (prevSub !== null) {
     prevSub.nextSub = newLink;
   } else {
     dep.subs = newLink;
@@ -235,7 +235,7 @@ function link(
 
 function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
   const depsTail = sub.depsTail;
-  if (depsTail !== undefined) {
+  if (depsTail !== null) {
     let link = sub.deps!;
     do {
       if (link === checkLink) {
@@ -245,7 +245,7 @@ function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
         break;
       }
       link = link.nextDep!;
-    } while (link !== undefined);
+    } while (link !== null);
   }
   return false;
 }
