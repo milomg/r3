@@ -43,28 +43,31 @@ export function increaseHeapSize(n: number) {
 }
 
 function insertIntoHeap(n: Computed<unknown>) {
-  if (n.flags & ReactiveFlags.Pushed) return;
-  n.flags |= ReactiveFlags.Pushed;
-  const newHStart = heap[n.height];
+  const flags = n.flags;
+  if (flags & ReactiveFlags.Pushed) return;
+  n.flags = flags | ReactiveFlags.Pushed;
+  const height = n.height;
+  const newHStart = heap[height];
   if (newHStart == null) {
-    heap[n.height] = n;
+    heap[height] = n;
   } else {
     newHStart.prevHeap.nextHeap = n;
     n.prevHeap = newHStart.prevHeap;
     newHStart.prevHeap = n;
     n.nextHeap = newHStart;
   }
-  if (n.height > maxHeightInHeap) {
-    maxHeightInHeap = n.height;
+  if (height > maxHeightInHeap) {
+    maxHeightInHeap = height;
   }
 }
 
 function deleteFromHeap(n: Computed<unknown>) {
-  if (heap[n.height] == n) {
-    heap[n.height] = n.nextHeap;
+  const height = n.height;
+  if (heap[height] === n) {
+    heap[height] = n.nextHeap;
   }
-  if (heap[n.height] == n) {
-    heap[n.height] = undefined;
+  if (heap[height] === n) {
+    heap[height] = undefined;
   } else {
     n.prevHeap.nextHeap = n.nextHeap;
     n.nextHeap.prevHeap = n.prevHeap;
@@ -123,8 +126,9 @@ function recompute(el: Computed<unknown>) {
 
     for (let s = el.subs; s; s = s.nextSub) {
       const o = s.sub;
-      if (o.flags & ReactiveFlags.Check) {
-        o.flags |= ReactiveFlags.Dirty;
+      const flags = o.flags;
+      if (flags & ReactiveFlags.Check) {
+        o.flags = flags | ReactiveFlags.Dirty;
       }
       insertIntoHeap(o);
     }
@@ -279,16 +283,14 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
 }
 
 function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
-  if ((el.flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) > newState)
+  const flags = el.flags;
+  if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState)
     return;
-  el.flags |= newState;
+  el.flags = flags | newState;
 
   let link = el.subs;
   while (link) {
-    const sub = link.sub;
-    if (isValidLink(link, sub)) {
-      markNode(sub, ReactiveFlags.Check);
-    }
+    markNode(link.sub, ReactiveFlags.Check);
     link = link.nextSub;
   }
 }
@@ -298,7 +300,7 @@ function markHeap() {
   markedHeap = true;
   for (let i = 0; i <= maxHeightInHeap; i++) {
     const head = heap[i];
-    if (head) {
+    if (head !== undefined) {
       let el = head;
       do {
         markNode(el);
