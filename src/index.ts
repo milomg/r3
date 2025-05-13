@@ -33,12 +33,12 @@ export interface Computed<T> extends Signal<T> {
 let markedHeap = false;
 let context: Computed<unknown> | null = null;
 
-let stabilizeHeight = 0;
-let maxHeightInHeap = 0;
-const heap: (Computed<unknown> | undefined)[] = new Array(2000);
+let minDirty = 0;
+let maxDirty = 0;
+const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
-  if (n > heap.length) {
-    heap.length = n;
+  if (n > dirtyHeap.length) {
+    dirtyHeap.length = n;
   }
 }
 
@@ -47,17 +47,17 @@ function insertIntoHeap(n: Computed<unknown>) {
   if (flags & ReactiveFlags.Pushed) return;
   n.flags = flags | ReactiveFlags.Pushed;
   const height = n.height;
-  const newHStart = heap[height];
+  const newHStart = dirtyHeap[height];
   if (newHStart == null) {
-    heap[height] = n;
+    dirtyHeap[height] = n;
   } else {
     newHStart.prevHeap.nextHeap = n;
     n.prevHeap = newHStart.prevHeap;
     newHStart.prevHeap = n;
     n.nextHeap = newHStart;
   }
-  if (height > maxHeightInHeap) {
-    maxHeightInHeap = height;
+  if (height > maxDirty) {
+    maxDirty = height;
   }
 }
 
@@ -67,10 +67,10 @@ function deleteFromHeap(n: Computed<unknown>) {
   n.flags = flags & ~ReactiveFlags.Pushed;
   const height = n.height;
   if (n.prevHeap === n) {
-    heap[height] = undefined;
+    dirtyHeap[height] = undefined;
   } else {
-    if (n === heap[height]) {
-      heap[height] = n.nextHeap;
+    if (n === dirtyHeap[height]) {
+      dirtyHeap[height] = n.nextHeap;
     }
     n.prevHeap.nextHeap = n.nextHeap;
     n.nextHeap.prevHeap = n.prevHeap;
@@ -142,7 +142,7 @@ function updateIfNecessary(el: Computed<unknown>): void {
     for (let d = el.deps; d; d = d.nextDep) {
       const dep = d.dep;
       if ("fn" in dep) {
-        updateIfNecessary(dep)
+        updateIfNecessary(dep);
       }
       if (el.flags & ReactiveFlags.Dirty) {
         break;
@@ -202,11 +202,7 @@ function link(
   }
 
   const prevSub = dep.subsTail;
-  if (
-    prevSub !== null &&
-    prevSub.sub === sub &&
-    isValidLink(prevSub, sub)
-  ) {
+  if (prevSub !== null && prevSub.sub === sub && isValidLink(prevSub, sub)) {
     return;
   }
   const newLink =
@@ -261,7 +257,7 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
         context.height = el.height + 1;
       }
       if (
-        el.height >= stabilizeHeight ||
+        el.height >= minDirty ||
         el.flags & (ReactiveFlags.Dirty | ReactiveFlags.Check)
       ) {
         markHeap();
@@ -286,8 +282,7 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
 
 function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
   const flags = el.flags;
-  if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState)
-    return;
+  if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState) return;
   el.flags = flags | newState;
 
   let link = el.subs;
@@ -300,8 +295,8 @@ function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
 function markHeap() {
   if (markedHeap) return;
   markedHeap = true;
-  for (let i = 0; i <= maxHeightInHeap; i++) {
-    const head = heap[i];
+  for (let i = 0; i <= maxDirty; i++) {
+    const head = dirtyHeap[i];
     if (head !== undefined) {
       let el = head;
       do {
@@ -313,12 +308,8 @@ function markHeap() {
 }
 
 export function stabilize() {
-  for (
-    stabilizeHeight = 0;
-    stabilizeHeight <= maxHeightInHeap;
-    stabilizeHeight++
-  ) {
-    for (let el = heap[stabilizeHeight]; el; el = heap[stabilizeHeight]) {
+  for (minDirty = 0; minDirty <= maxDirty; minDirty++) {
+    for (let el = dirtyHeap[minDirty]; el; el = dirtyHeap[minDirty]) {
       recompute(el);
     }
   }
