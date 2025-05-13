@@ -48,14 +48,14 @@ function insertIntoHeap(n: Computed<unknown>) {
   if (flags & ReactiveFlags.InHeap) return;
   n.flags = flags | ReactiveFlags.InHeap;
   const height = n.height;
-  const newHStart = dirtyHeap[height];
-  if (newHStart == null) {
+  const heapAtHeight = dirtyHeap[height];
+  if (heapAtHeight == null) {
     dirtyHeap[height] = n;
   } else {
-    newHStart.prevHeap.nextHeap = n;
-    n.prevHeap = newHStart.prevHeap;
-    newHStart.prevHeap = n;
-    n.nextHeap = newHStart;
+    heapAtHeight.prevHeap.nextHeap = n;
+    n.prevHeap = heapAtHeight.prevHeap;
+    heapAtHeight.prevHeap = n;
+    n.nextHeap = heapAtHeight;
   }
   if (height > maxDirty) {
     maxDirty = height;
@@ -110,13 +110,15 @@ export function signal<T>(v: T): Signal<T> {
 }
 
 function recompute(el: Computed<unknown>) {
+  deleteFromHeap(el);
+
   const oldcontext = context;
   context = el;
-  deleteFromHeap(el);
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
   const value = el.fn();
   el.flags = ReactiveFlags.None;
+  context = oldcontext;
 
   const depsTail = el.depsTail as Link | null;
   let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
@@ -124,7 +126,6 @@ function recompute(el: Computed<unknown>) {
     toRemove = unlink(toRemove, el);
   }
 
-  context = oldcontext;
   if (value !== el.value) {
     el.value = value;
 
@@ -159,6 +160,7 @@ function updateIfNecessary(el: Computed<unknown>): void {
   el.flags = ReactiveFlags.None;
 }
 
+// https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L100
 function unlink(link: Link, sub = link.sub): Link | null {
   const dep = link.dep;
   const prevDep = link.prevDep;
@@ -188,6 +190,7 @@ function unlink(link: Link, sub = link.sub): Link | null {
   return nextDep;
 }
 
+// https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
 function link(
   dep: Signal<unknown> | Computed<unknown>,
   sub: Computed<unknown>
@@ -197,17 +200,20 @@ function link(
     return;
   }
   let nextDep: Link | null = null;
-  nextDep = prevDep !== null ? prevDep.nextDep : sub.deps;
-  if (nextDep !== null && nextDep.dep === dep) {
-    sub.depsTail = nextDep;
-    return;
+  const isRecomputing = sub.flags & ReactiveFlags.RecomputingDeps;
+  if (isRecomputing) {
+    nextDep = prevDep !== null ? prevDep.nextDep : sub.deps;
+    if (nextDep !== null && nextDep.dep === dep) {
+      sub.depsTail = nextDep;
+      return;
+    }
   }
 
   const prevSub = dep.subsTail;
   if (
     prevSub !== null &&
     prevSub.sub === sub &&
-    (!(sub.flags & ReactiveFlags.RecomputingDeps) || isValidLink(prevSub, sub))
+    (!isRecomputing || isValidLink(prevSub, sub))
   ) {
     return;
   }
@@ -237,6 +243,7 @@ function link(
   }
 }
 
+// https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L284
 function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
   const depsTail = sub.depsTail;
   if (depsTail !== null) {
@@ -275,14 +282,11 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
 }
 
 export function setSignal(el: Signal<unknown>, v: unknown) {
-  markedHeap = false;
-  if (el.value !== v) {
-    el.value = v;
-    let link = el.subs;
-    while (link) {
-      insertIntoHeap(link.sub);
-      link = link.nextSub;
-    }
+  if (el.value === v) return;
+  el.value = v;
+  for (let link = el.subs; link !== null; link = link.nextSub) {
+    markedHeap = false;
+    insertIntoHeap(link.sub);
   }
 }
 
@@ -290,11 +294,8 @@ function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
   const flags = el.flags;
   if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState) return;
   el.flags = flags | newState;
-
-  let link = el.subs;
-  while (link) {
+  for (let link = el.subs; link !== null; link = link.nextSub) {
     markNode(link.sub, ReactiveFlags.Check);
-    link = link.nextSub;
   }
 }
 
