@@ -2,7 +2,8 @@ export const enum ReactiveFlags {
   None = 0,
   Check = 1 << 0,
   Dirty = 1 << 1,
-  Pushed = 1 << 2,
+  RecomputingDeps = 1 << 2,
+  InHeap = 1 << 3,
 }
 
 export interface Link {
@@ -44,8 +45,8 @@ export function increaseHeapSize(n: number) {
 
 function insertIntoHeap(n: Computed<unknown>) {
   const flags = n.flags;
-  if (flags & ReactiveFlags.Pushed) return;
-  n.flags = flags | ReactiveFlags.Pushed;
+  if (flags & ReactiveFlags.InHeap) return;
+  n.flags = flags | ReactiveFlags.InHeap;
   const height = n.height;
   const newHStart = dirtyHeap[height];
   if (newHStart == null) {
@@ -63,8 +64,8 @@ function insertIntoHeap(n: Computed<unknown>) {
 
 function deleteFromHeap(n: Computed<unknown>) {
   const flags = n.flags;
-  if (!(flags & ReactiveFlags.Pushed)) return;
-  n.flags = flags & ~ReactiveFlags.Pushed;
+  if (!(flags & ReactiveFlags.InHeap)) return;
+  n.flags = flags & ~ReactiveFlags.InHeap;
   const height = n.height;
   if (n.prevHeap === n) {
     dirtyHeap[height] = undefined;
@@ -113,8 +114,9 @@ function recompute(el: Computed<unknown>) {
   context = el;
   deleteFromHeap(el);
   el.depsTail = null;
-  el.flags = ReactiveFlags.None;
+  el.flags = ReactiveFlags.RecomputingDeps;
   const value = el.fn();
+  el.flags = ReactiveFlags.None;
 
   const depsTail = el.depsTail as Link | null;
   let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
@@ -202,7 +204,11 @@ function link(
   }
 
   const prevSub = dep.subsTail;
-  if (prevSub !== null && prevSub.sub === sub && isValidLink(prevSub, sub)) {
+  if (
+    prevSub !== null &&
+    prevSub.sub === sub &&
+    (!(sub.flags & ReactiveFlags.RecomputingDeps) || isValidLink(prevSub, sub))
+  ) {
     return;
   }
   const newLink =
