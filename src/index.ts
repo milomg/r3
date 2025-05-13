@@ -62,19 +62,21 @@ function insertIntoHeap(n: Computed<unknown>) {
 }
 
 function deleteFromHeap(n: Computed<unknown>) {
+  const flags = n.flags;
+  if (!(flags & ReactiveFlags.Pushed)) return;
+  n.flags = flags & ~ReactiveFlags.Pushed;
   const height = n.height;
-  if (heap[height] === n) {
-    heap[height] = n.nextHeap;
-  }
-  if (heap[height] === n) {
+  if (n.prevHeap === n) {
     heap[height] = undefined;
   } else {
+    if (n === heap[height]) {
+      heap[height] = n.nextHeap;
+    }
     n.prevHeap.nextHeap = n.nextHeap;
     n.nextHeap.prevHeap = n.prevHeap;
   }
   n.prevHeap = n;
   n.nextHeap = n;
-  n.flags &= ~ReactiveFlags.Pushed;
 }
 
 export function computed<T>(fn: () => T): Computed<T> {
