@@ -1,11 +1,5 @@
 import { expect, test } from "vitest";
-import {
-  computed,
-  read,
-  setSignal,
-  signal,
-  stabilize,
-} from "../src";
+import { computed, read, setSignal, signal, stabilize } from "../src";
 
 test("basic", () => {
   let aCount = 0;
@@ -42,22 +36,22 @@ test("basic", () => {
 test("diamond", () => {
   let callCount = 0;
   const s = signal(1);
-  const a = computed(() => read(s)+1);
-  const b = computed(() => read(s)+2);
-  const c = computed(() => read(s)+3);
+  const a = computed(() => read(s) + 1);
+  const b = computed(() => read(s) + 2);
+  const c = computed(() => read(s) + 3);
   const d = computed(() => {
     callCount++;
-    return read(a)*read(b)*read(c)
+    return read(a) * read(b) * read(c);
   });
-  
+
   stabilize();
   expect(callCount).toBe(1);
-  expect(d.value).toBe(2*3*4);
-  setSignal(s,2);
+  expect(d.value).toBe(2 * 3 * 4);
+  setSignal(s, 2);
   stabilize();
-  expect(callCount).toBe(2)
-  expect(d.value).toBe(3*4*5);
-})
+  expect(callCount).toBe(2);
+  expect(d.value).toBe(3 * 4 * 5);
+});
 
 test("dynamic sources recalculate correctly", () => {
   const a = signal(false);
@@ -162,5 +156,32 @@ test("small dynamic graph with signal grandparents", () => {
   setSignal(x, 1);
   stabilize();
   setSignal(y, 1);
+  stabilize();
+});
+
+test("should not run untracked inner effect", () => {
+  const a = signal(3);
+  const b = computed(function f0() {
+    return read(a) > 0;
+  });
+
+  computed(function f1() {
+    if (read(b)) {
+      computed(function f2() {
+        if (read(a) == 0) {
+          throw new Error("bad");
+        }
+      });
+    }
+  });
+  stabilize();
+
+  setSignal(a, 2);
+  stabilize();
+
+  setSignal(a, 1);
+  stabilize();
+
+  setSignal(a, 0);
   stabilize();
 });
