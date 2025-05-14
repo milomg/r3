@@ -95,7 +95,18 @@ export function computed<T>(fn: () => T): Computed<T> {
   };
   self.nextHeap = self;
   self.prevHeap = self;
-  insertIntoHeap(self);
+  if (context) {
+    if (context.depsTail === null) {
+      self.height = context.height;
+      recompute(self);
+    } else {
+      link(self, context);
+      self.height = context.height + 1;
+      insertIntoHeap(self);
+    }
+  } else {
+    recompute(self);
+  }
 
   return self;
 }
@@ -184,10 +195,20 @@ function unlink(link: Link, sub = link.sub): Link | null {
   }
   if (prevSub !== null) {
     prevSub.nextSub = nextSub;
-  } else {
-    dep.subs = nextSub;
+  } else if ((dep.subs = nextSub) === null) {
+    unwatched(dep);
   }
   return nextDep;
+}
+
+function unwatched(el: Signal<unknown> | Computed<unknown>) {
+  if ("fn" in el) {
+    deleteFromHeap(el);
+    let dep = el.deps;
+    while (dep !== null) {
+      dep = unlink(dep, el);
+    }
+  }
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
