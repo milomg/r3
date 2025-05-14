@@ -195,19 +195,20 @@ function unlink(link: Link, sub = link.sub): Link | null {
   }
   if (prevSub !== null) {
     prevSub.nextSub = nextSub;
-  } else if ((dep.subs = nextSub) === null) {
-    unwatched(dep);
+  } else {
+    dep.subs = nextSub;
+    if (nextSub === null && "fn" in dep) {
+      unwatched(dep);
+    }
   }
   return nextDep;
 }
 
-function unwatched(el: Signal<unknown> | Computed<unknown>) {
-  if ("fn" in el) {
-    deleteFromHeap(el);
-    let dep = el.deps;
-    while (dep !== null) {
-      dep = unlink(dep, el);
-    }
+function unwatched(el: Computed<unknown>) {
+  deleteFromHeap(el);
+  let dep = el.deps;
+  while (dep !== null) {
+    dep = unlink(dep, el);
   }
 }
 
