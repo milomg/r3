@@ -55,7 +55,6 @@ function insertIntoHeap(n: Computed<unknown>) {
     tail.nextHeap = n;
     n.prevHeap = tail;
     heapAtHeight.prevHeap = n;
-    n.nextHeap = heapAtHeight;
   }
   if (height > maxDirty) {
     maxDirty = height;
@@ -102,10 +101,10 @@ export function computed<T>(fn: () => T): Computed<T> {
       self.height = context.height;
       recompute(self, false);
     } else {
-      link(self, context);
       self.height = context.height + 1;
       insertIntoHeap(self);
     }
+    link(self, context);
   } else {
     recompute(self, false);
   }
