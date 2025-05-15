@@ -25,7 +25,7 @@ export interface Computed<T> extends Signal<T> {
   depsTail: Link | null;
   flags: ReactiveFlags;
   height: number;
-  nextHeap: Computed<unknown>;
+  nextHeap: Computed<unknown> | undefined;
   prevHeap: Computed<unknown>;
   fn: () => T;
 }
@@ -48,11 +48,12 @@ function insertIntoHeap(n: Computed<unknown>) {
   n.flags = flags | ReactiveFlags.InHeap;
   const height = n.height;
   const heapAtHeight = dirtyHeap[height];
-  if (heapAtHeight == null) {
+  if (heapAtHeight === undefined) {
     dirtyHeap[height] = n;
   } else {
-    heapAtHeight.prevHeap.nextHeap = n;
-    n.prevHeap = heapAtHeight.prevHeap;
+    const tail = heapAtHeight.prevHeap;
+    tail.nextHeap = n;
+    n.prevHeap = tail;
     heapAtHeight.prevHeap = n;
     n.nextHeap = heapAtHeight;
   }
@@ -69,42 +70,44 @@ function deleteFromHeap(n: Computed<unknown>) {
   if (n.prevHeap === n) {
     dirtyHeap[height] = undefined;
   } else {
-    if (n === dirtyHeap[height]) {
-      dirtyHeap[height] = n.nextHeap;
+    const next = n.nextHeap;
+    const dhh = dirtyHeap[height]!;
+    if (n === dhh) {
+      dirtyHeap[height] = next;
     }
-    n.prevHeap.nextHeap = n.nextHeap;
-    n.nextHeap.prevHeap = n.prevHeap;
+    const end = next ?? dhh;
+    end.prevHeap = n.prevHeap;
+    n.prevHeap.nextHeap = next;
   }
   n.prevHeap = n;
-  n.nextHeap = n;
+  n.nextHeap = undefined;
 }
 
 export function computed<T>(fn: () => T): Computed<T> {
   const self: Computed<T> = {
+    fn: fn,
+    value: undefined as T,
     height: 0,
-    nextHeap: null as any,
+    nextHeap: undefined,
     prevHeap: null as any,
     deps: null,
     depsTail: null,
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
-    value: undefined as T,
-    fn: fn,
   };
-  self.nextHeap = self;
   self.prevHeap = self;
   if (context) {
     if (context.depsTail === null) {
       self.height = context.height;
-      recompute(self);
+      recompute(self, false);
     } else {
       link(self, context);
       self.height = context.height + 1;
       insertIntoHeap(self);
     }
   } else {
-    recompute(self);
+    recompute(self, false);
   }
 
   return self;
@@ -119,8 +122,13 @@ export function signal<T>(v: T): Signal<T> {
   return self;
 }
 
-function recompute(el: Computed<unknown>) {
-  deleteFromHeap(el);
+function recompute(el: Computed<unknown>, del: boolean) {
+  if (del) {
+    deleteFromHeap(el);
+  } else {
+    el.nextHeap = undefined;
+    el.prevHeap = el;
+  }
 
   const oldcontext = context;
   context = el;
@@ -146,7 +154,7 @@ function recompute(el: Computed<unknown>) {
   if (value !== el.value) {
     el.value = value;
 
-    for (let s = el.subs; s; s = s.nextSub) {
+    for (let s = el.subs; s !== null; s = s.nextSub) {
       const o = s.sub;
       const flags = o.flags;
       if (flags & ReactiveFlags.Check) {
@@ -171,7 +179,7 @@ function updateIfNecessary(el: Computed<unknown>): void {
   }
 
   if (el.flags & ReactiveFlags.Dirty) {
-    recompute(el);
+    recompute(el, true);
   }
 
   el.flags = ReactiveFlags.None;
@@ -280,11 +288,12 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
     link(el, context);
 
     if ("fn" in el) {
-      if (el.height >= context.height) {
-        context.height = el.height + 1;
+      const height = el.height;
+      if (height >= context.height) {
+        context.height = height + 1;
       }
       if (
-        el.height >= minDirty ||
+        height >= minDirty ||
         el.flags & (ReactiveFlags.Dirty | ReactiveFlags.Check)
       ) {
         markHeap();
@@ -317,21 +326,20 @@ function markHeap() {
   if (markedHeap) return;
   markedHeap = true;
   for (let i = 0; i <= maxDirty; i++) {
-    const head = dirtyHeap[i];
-    if (head !== undefined) {
-      let el = head;
-      do {
-        markNode(el);
-        el = el.nextHeap;
-      } while (el !== head);
+    for (let el = dirtyHeap[i]; el !== undefined; el = el.nextHeap) {
+      markNode(el);
     }
   }
 }
 
 export function stabilize() {
   for (minDirty = 0; minDirty <= maxDirty; minDirty++) {
-    for (let el = dirtyHeap[minDirty]; el; el = dirtyHeap[minDirty]) {
-      recompute(el);
+    let el = dirtyHeap[minDirty];
+    dirtyHeap[minDirty] = undefined;
+    while (el !== undefined) {
+      const next = el.nextHeap;
+      recompute(el, false);
+      el = next;
     }
   }
 }
