@@ -9,7 +9,6 @@ export const enum ReactiveFlags {
 export interface Link {
   dep: Signal<unknown> | Computed<unknown>;
   sub: Computed<unknown>;
-  prevDep: Link | null;
   nextDep: Link | null;
   prevSub: Link | null;
   nextSub: Link | null;
@@ -133,8 +132,15 @@ function recompute(el: Computed<unknown>) {
 
   const depsTail = el.depsTail as Link | null;
   let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
-  while (toRemove !== null) {
-    toRemove = unlink(toRemove, el);
+  if (toRemove !== null) {
+    do {
+      toRemove = unlinkSubs(toRemove);
+    } while (toRemove !== null);
+    if (depsTail !== null) {
+      depsTail.nextDep = null;
+    } else {
+      el.deps = null;
+    }
   }
 
   if (value !== el.value) {
@@ -172,22 +178,11 @@ function updateIfNecessary(el: Computed<unknown>): void {
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L100
-function unlink(link: Link, sub = link.sub): Link | null {
+function unlinkSubs(link: Link): Link | null {
   const dep = link.dep;
-  const prevDep = link.prevDep;
   const nextDep = link.nextDep;
   const nextSub = link.nextSub;
   const prevSub = link.prevSub;
-  if (nextDep !== null) {
-    nextDep.prevDep = prevDep;
-  } else {
-    sub.depsTail = prevDep;
-  }
-  if (prevDep !== null) {
-    prevDep.nextDep = nextDep;
-  } else {
-    sub.deps = nextDep;
-  }
   if (nextSub !== null) {
     nextSub.prevSub = prevSub;
   } else {
@@ -208,8 +203,9 @@ function unwatched(el: Computed<unknown>) {
   deleteFromHeap(el);
   let dep = el.deps;
   while (dep !== null) {
-    dep = unlink(dep, el);
+    dep = unlinkSubs(dep);
   }
+  el.deps = null;
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
@@ -245,14 +241,10 @@ function link(
       {
         dep,
         sub,
-        prevDep,
         nextDep,
         prevSub,
         nextSub: null,
       });
-  if (nextDep !== null) {
-    nextDep.prevDep = newLink;
-  }
   if (prevDep !== null) {
     prevDep.nextDep = newLink;
   } else {
