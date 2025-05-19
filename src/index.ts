@@ -1,3 +1,7 @@
+export interface Disposable {
+  (): void;
+}
+
 export const enum ReactiveFlags {
   None = 0,
   Check = 1 << 0,
@@ -27,6 +31,7 @@ export interface Computed<T> extends Signal<T> {
   height: number;
   nextHeap: Computed<unknown> | undefined;
   prevHeap: Computed<unknown>;
+  disposal: Disposable | Disposable[] | null;
   fn: () => T;
 }
 
@@ -84,6 +89,7 @@ function deleteFromHeap(n: Computed<unknown>) {
 
 export function computed<T>(fn: () => T): Computed<T> {
   const self: Computed<T> = {
+    disposal: null,
     fn: fn,
     value: undefined as T,
     height: 0,
@@ -129,6 +135,7 @@ function recompute(el: Computed<unknown>, del: boolean) {
     el.prevHeap = el;
   }
 
+  runDisposal(el);
   const oldcontext = context;
   context = el;
   el.depsTail = null;
@@ -213,12 +220,13 @@ function unwatched(el: Computed<unknown>) {
     dep = unlinkSubs(dep);
   }
   el.deps = null;
+  runDisposal(el);
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
 function link(
   dep: Signal<unknown> | Computed<unknown>,
-  sub: Computed<unknown>
+  sub: Computed<unknown>,
 ) {
   const prevDep = sub.depsTail;
   if (prevDep !== null && prevDep.dep === dep) {
@@ -341,4 +349,34 @@ export function stabilize() {
       el = next;
     }
   }
+}
+
+export function onCleanup(fn: Disposable): Disposable {
+  if (!context) return fn;
+
+  const node = context;
+
+  if (!node.disposal) {
+    node.disposal = fn;
+  } else if (Array.isArray(node.disposal)) {
+    node.disposal.push(fn);
+  } else {
+    node.disposal = [node.disposal, fn];
+  }
+  return fn;
+}
+
+function runDisposal(node: Computed<unknown>): void {
+  if (!node.disposal) return;
+
+  if (Array.isArray(node.disposal)) {
+    for (let i = 0; i < node.disposal.length; i++) {
+      const callable = node.disposal[i];
+      callable.call(callable);
+    }
+  } else {
+    node.disposal.call(node.disposal);
+  }
+
+  node.disposal = null;
 }
