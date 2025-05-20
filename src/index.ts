@@ -228,11 +228,9 @@ function recompute(el: Computed<unknown>, del: boolean) {
     }
   }
 
-  if (el.asyncFlags & (AsyncFlags.Pending | AsyncFlags.Error)) {
+  if (el.asyncFlags && el.asyncFlags !== prevAsyncFlags) {
     notifyAsyncFlags(el);
-  }
-
-  if (value !== el.value) {
+  } else if (value !== el.value) {
     el.value = value;
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
@@ -243,7 +241,9 @@ function recompute(el: Computed<unknown>, del: boolean) {
       }
       insertIntoHeap(o);
     }
-  } else if (prevAsyncFlags) notifyAsyncFlags(el);
+  } else if (prevAsyncFlags && !el.asyncFlags) {
+    notifyAsyncFlags(el);
+  }
 }
 
 function notifyAsyncFlags(el: Signal<unknown>) {
