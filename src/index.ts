@@ -228,9 +228,10 @@ function recompute(el: Computed<unknown>, del: boolean) {
     }
   }
 
-  if (el.asyncFlags && el.asyncFlags !== prevAsyncFlags) {
-    notifyAsyncFlags(el);
-  } else if (value !== el.value) {
+  const valueChanged = value !== el.value;
+  const asyncFlagsChanged = el.asyncFlags !== prevAsyncFlags;
+
+  if (valueChanged || asyncFlagsChanged) {
     el.value = value;
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
@@ -241,18 +242,6 @@ function recompute(el: Computed<unknown>, del: boolean) {
       }
       insertIntoHeap(o);
     }
-  } else if (prevAsyncFlags && !el.asyncFlags) {
-    notifyAsyncFlags(el);
-  }
-}
-
-function notifyAsyncFlags(el: Signal<unknown>) {
-  for (let s = el.subs; s !== null; s = s.nextSub) {
-    const o = s.sub;
-    o.asyncFlags = el.asyncFlags;
-    o.error = el.error;
-
-    notifyAsyncFlags(o);
   }
 }
 
@@ -408,11 +397,7 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
 }
 
 export function setSignal(el: Signal<unknown>, v: unknown) {
-  if (el.value === v) {
-    if (el.asyncFlags) {
-      clearAsyncFlags(el);
-      notifyAsyncFlags(el);
-    }
+  if (el.value === v && !el.asyncFlags) {
     return;
   }
   el.value = v;

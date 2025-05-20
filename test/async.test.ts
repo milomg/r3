@@ -125,6 +125,7 @@ test("async with cutoff", async () => {
     bCount++;
     return read(a) + 1;
   });
+
   stabilize();
 
   expect(() => read(b)).toThrow(NotReadyError);
@@ -138,11 +139,11 @@ test("async with cutoff", async () => {
   stabilize();
 
   expect(() => read(b)).toThrow(NotReadyError);
-  expect(bCount).toBe(2);
+  expect(bCount).toBe(3);
 
-  await sleep(110);
+  await sleep(100);
   expect(read(b)).toBe(2);
-  expect(bCount).toBe(2);
+  expect(bCount).toBe(4);
 });
 
 test("error with cutoff", async () => {
@@ -164,15 +165,19 @@ test("error with cutoff", async () => {
   expect(read(b)).toBe(2);
   expect(bCount).toBe(1);
 
+  await sleep(1);
   setSignal(s, 2);
   stabilize();
   expect(() => read(b)).toThrow(Error);
-  expect(bCount).toBe(2);
 
+  // this should be 2 but because b was read after stabilizing, it attempts to self heal by rerunning
+  expect(bCount).toBe(3);
+
+  await sleep(1);
   setSignal(s, 3);
   stabilize();
   expect(read(b)).toBe(2);
-  expect(bCount).toBe(2);
+  expect(bCount).toBe(4);
 });
 
 test("self healing", async () => {
