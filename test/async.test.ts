@@ -62,7 +62,6 @@ test("async error", async () => {
 });
 
 test("async propogation", async () => {
-  console.log("async propogation");
   let aCount = 0;
   let bCount = 0;
   const s = signal(1);
@@ -114,4 +113,84 @@ test("error propogation", async () => {
   expect(() => read(b)).toThrow(Error);
   expect(aCount).toBe(1);
   expect(bCount).toBe(1);
+});
+
+test("async with cutoff", async () => {
+  let bCount = 0;
+  const s = signal(1);
+  const a = computed(() => {
+    return sleep(read(s)).then(() => 1);
+  });
+  const b = computed(() => {
+    bCount++;
+    return read(a) + 1;
+  });
+  stabilize();
+
+  expect(() => read(b)).toThrow(NotReadyError);
+  expect(bCount).toBe(1);
+
+  await sleep(100);
+  expect(read(b)).toBe(2);
+  expect(bCount).toBe(2);
+
+  setSignal(s, 2);
+  stabilize();
+
+  expect(() => read(b)).toThrow(NotReadyError);
+  expect(bCount).toBe(2);
+
+  await sleep(110);
+  expect(read(b)).toBe(2);
+  expect(bCount).toBe(2);
+});
+
+test("error with cutoff", async () => {
+  let bCount = 0;
+  const s = signal(1);
+  const a = computed(() => {
+    if (read(s) === 2) {
+      throw new Error();
+    }
+    return 1;
+  });
+  const b = computed(() => {
+    bCount++;
+    return read(a) + 1;
+  });
+
+  stabilize();
+
+  expect(read(b)).toBe(2);
+  expect(bCount).toBe(1);
+
+  setSignal(s, 2);
+  stabilize();
+  expect(() => read(b)).toThrow(Error);
+  expect(bCount).toBe(2);
+
+  setSignal(s, 3);
+  stabilize();
+  expect(read(b)).toBe(2);
+  expect(bCount).toBe(2);
+});
+
+test("self healing", async () => {
+  let error = false;
+  let aCount = 0;
+  const a = computed(() => {
+    aCount++;
+    if (!error) {
+      error = true;
+      throw new Error();
+    }
+    return 1;
+  });
+
+  expect(() => read(a)).toThrow(Error);
+  expect(aCount).toBe(1);
+  stabilize();
+
+  expect(read(a)).toBe(1);
+  expect(aCount).toBe(2);
 });

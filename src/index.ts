@@ -30,6 +30,7 @@ export interface Signal<T> {
   value: T;
   asyncFlags: AsyncFlags;
   error: Error | null;
+  time: number;
 }
 
 export interface Computed<T> extends Signal<T> {
@@ -56,6 +57,8 @@ export function increaseHeapSize(n: number) {
     dirtyHeap.length = n;
   }
 }
+
+let clock = 0;
 
 function insertIntoHeap(n: Computed<unknown>) {
   const flags = n.flags;
@@ -112,6 +115,7 @@ export function computed<T>(fn: () => T | Promise<T>): Computed<T> {
     flags: ReactiveFlags.None,
     asyncFlags: AsyncFlags.None,
     error: null,
+    time: clock,
   };
   self.prevHeap = self;
   if (context) {
@@ -137,6 +141,7 @@ export function signal<T>(v: T): Signal<T> {
     subsTail: null,
     asyncFlags: AsyncFlags.None,
     error: null,
+    time: clock,
   };
   return self;
 }
@@ -155,24 +160,34 @@ function recompute(el: Computed<unknown>, del: boolean) {
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
   let value = el.value;
+  el.time = clock;
+  let prevAsyncFlags = el.asyncFlags;
   try {
-    value = el.fn();
-    if (value instanceof Promise) {
+    const next = el.fn();
+    if (next instanceof Promise) {
+      let aborted = false;
+      onCleanup(() => {
+        aborted = true;
+      });
       el.asyncFlags = AsyncFlags.Pending;
       el.error = null;
-      value
+      next
         .then((v) => {
+          if (aborted) return;
           setSignal(el, v);
           stabilize();
         })
         .catch((e) => {
+          if (aborted) return;
           el.asyncFlags = AsyncFlags.Error;
           el.error = e as Error;
+          // el.flags = ReactiveFlags.Dirty;
           stabilize();
         });
     } else {
       el.asyncFlags = AsyncFlags.None;
       el.error = null;
+      value = next;
     }
   } catch (e) {
     if (e instanceof NotReadyError) {
@@ -181,6 +196,7 @@ function recompute(el: Computed<unknown>, del: boolean) {
     } else {
       el.asyncFlags = AsyncFlags.Error;
       el.error = e as Error;
+      // el.flags = ReactiveFlags.Dirty;
     }
   }
   el.flags = ReactiveFlags.None;
@@ -214,7 +230,7 @@ function recompute(el: Computed<unknown>, del: boolean) {
       }
       insertIntoHeap(o);
     }
-  }
+  } else if (prevAsyncFlags) notifyAsyncFlags(el);
 }
 
 function notifyAsyncFlags(el: Signal<unknown>) {
@@ -368,16 +384,29 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
     throw new NotReadyError();
   }
   if (el.asyncFlags & AsyncFlags.Error) {
-    throw el.error;
+    if (el.time < clock) {
+      recompute(el as Computed<unknown>, false);
+      return read(el);
+    } else {
+      throw el.error;
+    }
   }
   return el.value;
 }
 
 export function setSignal(el: Signal<unknown>, v: unknown) {
-  if (el.value === v) return;
+  if (el.value === v) {
+    if (el.asyncFlags) {
+      el.asyncFlags = AsyncFlags.None;
+      el.error = null;
+      notifyAsyncFlags(el);
+    }
+    return;
+  }
   el.value = v;
   el.asyncFlags = AsyncFlags.None;
   el.error = null;
+  el.time = clock;
   for (let link = el.subs; link !== null; link = link.nextSub) {
     markedHeap = false;
     insertIntoHeap(link.sub);
@@ -413,6 +442,7 @@ export function stabilize() {
       el = next;
     }
   }
+  clock++;
 }
 
 export function onCleanup(fn: Disposable): Disposable {
