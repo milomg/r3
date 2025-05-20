@@ -146,6 +146,27 @@ export function signal<T>(v: T): Signal<T> {
   return self;
 }
 
+function setAsyncFlags(
+  signal: Signal<unknown>,
+  flags: AsyncFlags,
+  error: Error | null = null
+) {
+  signal.asyncFlags = flags;
+  signal.error = error;
+}
+
+function setPending(signal: Signal<unknown>) {
+  setAsyncFlags(signal, AsyncFlags.Pending);
+}
+
+function setError(signal: Signal<unknown>, error: Error) {
+  setAsyncFlags(signal, AsyncFlags.Error, error);
+}
+
+function clearAsyncFlags(signal: Signal<unknown>) {
+  setAsyncFlags(signal, AsyncFlags.None);
+}
+
 function recompute(el: Computed<unknown>, del: boolean) {
   if (del) {
     deleteFromHeap(el);
@@ -166,11 +187,9 @@ function recompute(el: Computed<unknown>, del: boolean) {
     const next = el.fn();
     if (next instanceof Promise) {
       let aborted = false;
-      onCleanup(() => {
-        aborted = true;
-      });
-      el.asyncFlags = AsyncFlags.Pending;
-      el.error = null;
+      onCleanup(() => (aborted = true));
+
+      setPending(el);
       next
         .then((v) => {
           if (aborted) return;
@@ -179,24 +198,18 @@ function recompute(el: Computed<unknown>, del: boolean) {
         })
         .catch((e) => {
           if (aborted) return;
-          el.asyncFlags = AsyncFlags.Error;
-          el.error = e as Error;
-          // el.flags = ReactiveFlags.Dirty;
+          setError(el, e as Error);
           stabilize();
         });
     } else {
-      el.asyncFlags = AsyncFlags.None;
-      el.error = null;
+      clearAsyncFlags(el);
       value = next;
     }
   } catch (e) {
     if (e instanceof NotReadyError) {
-      el.asyncFlags = AsyncFlags.Pending;
-      el.error = null;
+      setPending(el);
     } else {
-      el.asyncFlags = AsyncFlags.Error;
-      el.error = e as Error;
-      // el.flags = ReactiveFlags.Dirty;
+      setError(el, e as Error);
     }
   }
   el.flags = ReactiveFlags.None;
@@ -397,15 +410,13 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
 export function setSignal(el: Signal<unknown>, v: unknown) {
   if (el.value === v) {
     if (el.asyncFlags) {
-      el.asyncFlags = AsyncFlags.None;
-      el.error = null;
+      clearAsyncFlags(el);
       notifyAsyncFlags(el);
     }
     return;
   }
   el.value = v;
-  el.asyncFlags = AsyncFlags.None;
-  el.error = null;
+  clearAsyncFlags(el);
   el.time = clock;
   for (let link = el.subs; link !== null; link = link.nextSub) {
     markedHeap = false;
