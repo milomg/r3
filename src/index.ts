@@ -10,6 +10,12 @@ export const enum ReactiveFlags {
   InHeap = 1 << 3,
 }
 
+export const enum AsyncFlags {
+  None = 0,
+  Pending = 1 << 0,
+  Error = 1 << 1,
+}
+
 export interface Link {
   dep: Signal<unknown> | Computed<unknown>;
   sub: Computed<unknown>;
@@ -22,6 +28,8 @@ export interface Signal<T> {
   subs: Link | null;
   subsTail: Link | null;
   value: T;
+  asyncFlags: AsyncFlags;
+  error: Error | null;
 }
 
 export interface Computed<T> extends Signal<T> {
@@ -32,8 +40,10 @@ export interface Computed<T> extends Signal<T> {
   nextHeap: Computed<unknown> | undefined;
   prevHeap: Computed<unknown>;
   disposal: Disposable | Disposable[] | null;
-  fn: () => T;
+  fn: () => T | Promise<T>;
 }
+
+export class NotReadyError extends Error {}
 
 let markedHeap = false;
 let context: Computed<unknown> | null = null;
@@ -87,7 +97,7 @@ function deleteFromHeap(n: Computed<unknown>) {
   n.nextHeap = undefined;
 }
 
-export function computed<T>(fn: () => T): Computed<T> {
+export function computed<T>(fn: () => T | Promise<T>): Computed<T> {
   const self: Computed<T> = {
     disposal: null,
     fn: fn,
@@ -100,6 +110,8 @@ export function computed<T>(fn: () => T): Computed<T> {
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
+    asyncFlags: AsyncFlags.None,
+    error: null,
   };
   self.prevHeap = self;
   if (context) {
@@ -123,6 +135,8 @@ export function signal<T>(v: T): Signal<T> {
     value: v,
     subs: null,
     subsTail: null,
+    asyncFlags: AsyncFlags.None,
+    error: null,
   };
   return self;
 }
@@ -140,7 +154,35 @@ function recompute(el: Computed<unknown>, del: boolean) {
   context = el;
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
-  const value = el.fn();
+  let value = el.value;
+  try {
+    value = el.fn();
+    if (value instanceof Promise) {
+      el.asyncFlags = AsyncFlags.Pending;
+      el.error = null;
+      value
+        .then((v) => {
+          setSignal(el, v);
+          stabilize();
+        })
+        .catch((e) => {
+          el.asyncFlags = AsyncFlags.Error;
+          el.error = e as Error;
+          stabilize();
+        });
+    } else {
+      el.asyncFlags = AsyncFlags.None;
+      el.error = null;
+    }
+  } catch (e) {
+    if (e instanceof NotReadyError) {
+      el.asyncFlags = AsyncFlags.Pending;
+      el.error = null;
+    } else {
+      el.asyncFlags = AsyncFlags.Error;
+      el.error = e as Error;
+    }
+  }
   el.flags = ReactiveFlags.None;
   context = oldcontext;
 
@@ -157,6 +199,10 @@ function recompute(el: Computed<unknown>, del: boolean) {
     }
   }
 
+  if (el.asyncFlags & (AsyncFlags.Pending | AsyncFlags.Error)) {
+    notifyAsyncFlags(el);
+  }
+
   if (value !== el.value) {
     el.value = value;
 
@@ -168,6 +214,16 @@ function recompute(el: Computed<unknown>, del: boolean) {
       }
       insertIntoHeap(o);
     }
+  }
+}
+
+function notifyAsyncFlags(el: Signal<unknown>) {
+  for (let s = el.subs; s !== null; s = s.nextSub) {
+    const o = s.sub;
+    o.asyncFlags = el.asyncFlags;
+    o.error = el.error;
+
+    notifyAsyncFlags(o);
   }
 }
 
@@ -226,7 +282,7 @@ function unwatched(el: Computed<unknown>) {
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
 function link(
   dep: Signal<unknown> | Computed<unknown>,
-  sub: Computed<unknown>,
+  sub: Computed<unknown>
 ) {
   const prevDep = sub.depsTail;
   if (prevDep !== null && prevDep.dep === dep) {
@@ -308,12 +364,20 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
       }
     }
   }
+  if (el.asyncFlags & AsyncFlags.Pending) {
+    throw new NotReadyError();
+  }
+  if (el.asyncFlags & AsyncFlags.Error) {
+    throw el.error;
+  }
   return el.value;
 }
 
 export function setSignal(el: Signal<unknown>, v: unknown) {
   if (el.value === v) return;
   el.value = v;
+  el.asyncFlags = AsyncFlags.None;
+  el.error = null;
   for (let link = el.subs; link !== null; link = link.nextSub) {
     markedHeap = false;
     insertIntoHeap(link.sub);
