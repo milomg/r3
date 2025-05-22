@@ -6,6 +6,7 @@ import {
   stabilize,
   NotReadyError,
   setSignal,
+  asyncComputed,
 } from "../src";
 
 function sleep<T>(input: T, ms = 100): Promise<T> {
@@ -14,7 +15,7 @@ function sleep<T>(input: T, ms = 100): Promise<T> {
 
 test("basic async", async () => {
   const s = signal(1);
-  const a = computed(() => {
+  const a = asyncComputed(() => {
     return sleep(read(s) + 1);
   });
   stabilize();
@@ -41,7 +42,7 @@ test("basic error", async () => {
 
 test("async error", async () => {
   const s = signal(1);
-  const a = computed(() => {
+  const a = asyncComputed(() => {
     return sleep(read(s)).then((v) => {
       if (v % 2) throw new Error();
       return v;
@@ -65,7 +66,7 @@ test("async propogation", async () => {
   let aCount = 0;
   let bCount = 0;
   const s = signal(1);
-  const a = computed(() => {
+  const a = asyncComputed(() => {
     aCount++;
     return sleep(read(s)).then((v) => v + 1);
   });
@@ -91,7 +92,7 @@ test("error propogation", async () => {
   let aCount = 0;
   let bCount = 0;
   const s = signal(1);
-  const a = computed(() => {
+  const a = asyncComputed(() => {
     aCount++;
     return sleep(read(s)).then((v) => {
       if (v % 2) throw new Error();
@@ -118,7 +119,7 @@ test("error propogation", async () => {
 test("async with cutoff", async () => {
   let bCount = 0;
   const s = signal(1);
-  const a = computed(() => {
+  const a = asyncComputed(() => {
     return sleep(read(s)).then(() => 1);
   });
   const b = computed(() => {

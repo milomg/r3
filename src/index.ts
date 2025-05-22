@@ -17,8 +17,8 @@ export const enum AsyncFlags {
 }
 
 export interface Link {
-  dep: Signal<unknown> | Computed<unknown>;
-  sub: Computed<unknown>;
+  dep: Signal<any> | Computed<any>;
+  sub: Computed<any>;
   nextDep: Link | null;
   prevSub: Link | null;
   nextSub: Link | null;
@@ -38,20 +38,20 @@ export interface Computed<T> extends Signal<T> {
   depsTail: Link | null;
   flags: ReactiveFlags;
   height: number;
-  nextHeap: Computed<unknown> | undefined;
-  prevHeap: Computed<unknown>;
+  nextHeap: Computed<any> | undefined;
+  prevHeap: Computed<any>;
   disposal: Disposable | Disposable[] | null;
-  fn: () => T | Promise<T>;
+  fn: (prev?: T) => T;
 }
 
 export class NotReadyError extends Error {}
 
 let markedHeap = false;
-let context: Computed<unknown> | null = null;
+let context: Computed<any> | null = null;
 
 let minDirty = 0;
 let maxDirty = 0;
-const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
+const dirtyHeap: (Computed<any> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
   if (n > dirtyHeap.length) {
     dirtyHeap.length = n;
@@ -60,7 +60,7 @@ export function increaseHeapSize(n: number) {
 
 let clock = 0;
 
-function insertIntoHeap(n: Computed<unknown>) {
+function insertIntoHeap<T>(n: Computed<T>) {
   const flags = n.flags;
   if (flags & ReactiveFlags.InHeap) return;
   n.flags = flags | ReactiveFlags.InHeap;
@@ -79,7 +79,7 @@ function insertIntoHeap(n: Computed<unknown>) {
   }
 }
 
-function deleteFromHeap(n: Computed<unknown>) {
+function deleteFromHeap<T>(n: Computed<T>) {
   const flags = n.flags;
   if (!(flags & ReactiveFlags.InHeap)) return;
   n.flags = flags & ~ReactiveFlags.InHeap;
@@ -100,11 +100,101 @@ function deleteFromHeap(n: Computed<unknown>) {
   n.nextHeap = undefined;
 }
 
-export function computed<T>(fn: () => T | Promise<T>): Computed<T> {
+export function computed<T>(fn: (prev?: T) => T): Computed<T>;
+export function computed<T>(fn: (prev: T) => T, initialValue: T): Computed<T>;
+export function computed<T>(
+  fn: (prev?: T) => T,
+  initialValue?: T
+): Computed<T> {
   const self: Computed<T> = {
     disposal: null,
     fn: fn,
-    value: undefined as T,
+    value: initialValue as T,
+    height: 0,
+    nextHeap: undefined,
+    prevHeap: null as any,
+    deps: null,
+    depsTail: null,
+    subs: null,
+    subsTail: null,
+    flags: ReactiveFlags.None,
+    asyncFlags: AsyncFlags.None,
+    error: null,
+    time: clock,
+  };
+  self.prevHeap = self;
+  if (context) {
+    if (context.depsTail === null) {
+      self.height = context.height;
+      recompute(self, false);
+    } else {
+      self.height = context.height + 1;
+      insertIntoHeap(self);
+    }
+    link(self, context);
+  } else {
+    recompute(self, false);
+  }
+
+  return self;
+}
+
+export function asyncComputed<T>(
+  asyncFn: (prev?: T) => T | Promise<T> | AsyncIterable<T>
+): Computed<T>;
+export function asyncComputed<T>(
+  asyncFn: (prev: T) => T | Promise<T> | AsyncIterable<T>,
+  initialValue: T
+): Computed<T>;
+export function asyncComputed<T>(
+  asyncFn: (prev?: T) => T | Promise<T> | AsyncIterable<T>,
+  initialValue?: T
+): Computed<T> {
+  const fn = (prev?: T) => {
+    const result = asyncFn(prev);
+    const isPromise = result instanceof Promise;
+    // @ts-expect-error
+    const iterator = result[Symbol.asyncIterator];
+    if (!isPromise && !iterator) {
+      return result as T;
+    }
+    let aborted = false;
+    onCleanup(() => (aborted = true));
+
+    if (isPromise) {
+      setPending(self);
+      result
+        .then((v) => {
+          if (aborted) return;
+          setSignal(self, v);
+          stabilize();
+        })
+        .catch((e) => {
+          if (aborted) return;
+          setError(self, e as Error);
+          stabilize();
+        });
+    } else {
+      (async () => {
+        try {
+          for await (let value of result as AsyncIterable<T>) {
+            if (aborted) return;
+            setSignal(self, value);
+            stabilize();
+          }
+        } catch (error) {
+          if (aborted) return;
+          setError(self, error as Error);
+          stabilize();
+        }
+      })();
+    }
+    throw new NotReadyError();
+  };
+  const self: Computed<T> = {
+    disposal: null,
+    fn: fn,
+    value: initialValue as T,
     height: 0,
     nextHeap: undefined,
     prevHeap: null as any,
@@ -146,8 +236,8 @@ export function signal<T>(v: T): Signal<T> {
   return self;
 }
 
-function setAsyncFlags(
-  signal: Signal<unknown>,
+function setAsyncFlags<T>(
+  signal: Signal<T>,
   flags: AsyncFlags,
   error: Error | null = null
 ) {
@@ -155,19 +245,19 @@ function setAsyncFlags(
   signal.error = error;
 }
 
-function setPending(signal: Signal<unknown>) {
+function setPending<T>(signal: Signal<T>) {
   setAsyncFlags(signal, AsyncFlags.Pending);
 }
 
-function setError(signal: Signal<unknown>, error: Error) {
+function setError<T>(signal: Signal<T>, error: Error) {
   setAsyncFlags(signal, AsyncFlags.Error, error);
 }
 
-function clearAsyncFlags(signal: Signal<unknown>) {
+function clearAsyncFlags<T>(signal: Signal<T>) {
   setAsyncFlags(signal, AsyncFlags.None);
 }
 
-function recompute(el: Computed<unknown>, del: boolean) {
+function recompute<T>(el: Computed<T>, del: boolean) {
   if (del) {
     deleteFromHeap(el);
   } else {
@@ -184,27 +274,8 @@ function recompute(el: Computed<unknown>, del: boolean) {
   el.time = clock;
   let prevAsyncFlags = el.asyncFlags;
   try {
-    const next = el.fn();
-    if (next instanceof Promise) {
-      let aborted = false;
-      onCleanup(() => (aborted = true));
-
-      setPending(el);
-      next
-        .then((v) => {
-          if (aborted) return;
-          setSignal(el, v);
-          stabilize();
-        })
-        .catch((e) => {
-          if (aborted) return;
-          setError(el, e as Error);
-          stabilize();
-        });
-    } else {
-      clearAsyncFlags(el);
-      value = next;
-    }
+    value = el.fn(value);
+    clearAsyncFlags(el);
   } catch (e) {
     if (e instanceof NotReadyError) {
       setPending(el);
@@ -245,7 +316,7 @@ function recompute(el: Computed<unknown>, del: boolean) {
   }
 }
 
-function updateIfNecessary(el: Computed<unknown>): void {
+function updateIfNecessary<T>(el: Computed<T>): void {
   if (el.flags & ReactiveFlags.Check) {
     for (let d = el.deps; d; d = d.nextDep) {
       const dep = d.dep;
@@ -287,7 +358,7 @@ function unlinkSubs(link: Link): Link | null {
   return nextDep;
 }
 
-function unwatched(el: Computed<unknown>) {
+function unwatched<T>(el: Computed<T>) {
   deleteFromHeap(el);
   let dep = el.deps;
   while (dep !== null) {
@@ -298,10 +369,7 @@ function unwatched(el: Computed<unknown>) {
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L52
-function link(
-  dep: Signal<unknown> | Computed<unknown>,
-  sub: Computed<unknown>
-) {
+function link<T>(dep: Signal<T> | Computed<T>, sub: Computed<T>) {
   const prevDep = sub.depsTail;
   if (prevDep !== null && prevDep.dep === dep) {
     return;
@@ -347,7 +415,7 @@ function link(
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L284
-function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
+function isValidLink<T>(checkLink: Link, sub: Computed<T>): boolean {
   const depsTail = sub.depsTail;
   if (depsTail !== null) {
     let link = sub.deps!;
@@ -396,7 +464,7 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
   return el.value;
 }
 
-export function setSignal(el: Signal<unknown>, v: unknown) {
+export function setSignal<T>(el: Signal<T>, v: T) {
   if (el.value === v && !el.asyncFlags) {
     return;
   }
@@ -409,7 +477,7 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
   }
 }
 
-function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
+function markNode<T>(el: Computed<T>, newState = ReactiveFlags.Dirty) {
   const flags = el.flags;
   if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState) return;
   el.flags = flags | newState;
@@ -456,7 +524,7 @@ export function onCleanup(fn: Disposable): Disposable {
   return fn;
 }
 
-function runDisposal(node: Computed<unknown>): void {
+function runDisposal<T>(node: Computed<T>): void {
   if (!node.disposal) return;
 
   if (Array.isArray(node.disposal)) {
