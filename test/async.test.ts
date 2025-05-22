@@ -7,9 +7,11 @@ import {
   NotReadyError,
   setSignal,
   asyncComputed,
+  latest,
+  isPending,
 } from "../src";
 
-function sleep<T>(input: T, ms = 100): Promise<T> {
+function sleep<T>(input: T, ms = 5): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(input), ms));
 }
 
@@ -199,4 +201,93 @@ test("self healing", async () => {
 
   expect(read(a)).toBe(1);
   expect(aCount).toBe(2);
+});
+
+test("latest tears on update", async () => {
+  const s = signal(1);
+  const a = asyncComputed(() => {
+    return sleep(read(s)).then((v) => v + 1);
+  });
+  stabilize();
+
+  await sleep(100);
+
+  setSignal(s, 2);
+  stabilize();
+
+  expect(() => read(a)).toThrow(NotReadyError);
+  expect(latest(() => read(a))).toBe(2);
+});
+
+test("latest throws on uninitialized", async () => {
+  const s = signal(1);
+  const a = asyncComputed(() => {
+    return sleep(read(s)).then((v) => v + 1);
+  });
+  stabilize();
+
+  expect(() => read(a)).toThrow(NotReadyError);
+  expect(() => latest(() => read(a))).toThrow(NotReadyError);
+});
+
+test("latest returns fallback on uninitialized", async () => {
+  const s = signal(1);
+  const a = asyncComputed(() => {
+    return sleep(read(s)).then((v) => v + 1);
+  });
+  stabilize();
+
+  expect(() => read(a)).toThrow(NotReadyError);
+  expect(latest(() => read(a), 0)).toBe(0);
+});
+
+test("isPending throws on uninitialized", async () => {
+  const s = signal(1);
+  const a = asyncComputed(() => {
+    return sleep(read(s)).then((v) => v + 1);
+  });
+
+  expect(() => isPending(() => read(a))).toThrow(NotReadyError);
+
+  await sleep(100);
+
+  expect(isPending(() => read(a))).toBe(false);
+});
+
+test("isPending returns true on update", async () => {
+  const s = signal(1);
+  const a = asyncComputed(() => {
+    return sleep(read(s)).then((v) => v + 1);
+  });
+  stabilize();
+
+  await sleep(100);
+  expect(isPending(() => read(a))).toBe(false);
+
+  setSignal(s, 2);
+  stabilize();
+  expect(isPending(() => read(a))).toBe(true);
+
+  await sleep(100);
+  expect(isPending(() => read(a))).toBe(false);
+});
+
+test("isPending returns fallback on uninitialized", async () => {
+  const a = asyncComputed(() => {
+    return sleep(1).then((v) => v + 1);
+  });
+  stabilize();
+
+  expect(() => read(a)).toThrow(NotReadyError);
+  expect(isPending(() => read(a), false)).toBe(false);
+});
+
+test("isPending returns false on error", async () => {
+  const a = computed(() => {
+    throw new Error();
+  });
+  stabilize();
+
+  expect(() => read(a)).toThrow(Error);
+  expect(isPending(() => read(a))).toBe(false);
 });

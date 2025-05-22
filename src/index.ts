@@ -14,6 +14,7 @@ export const enum AsyncFlags {
   None = 0,
   Pending = 1 << 0,
   Error = 1 << 1,
+  Uninitialized = 1 << 2,
 }
 
 export interface Link {
@@ -59,6 +60,8 @@ export function increaseHeapSize(n: number) {
 }
 
 let clock = 0;
+let stale = false;
+let pendingCheck: { value: boolean };
 
 function insertIntoHeap<T>(n: Computed<T>) {
   const flags = n.flags;
@@ -118,7 +121,7 @@ export function computed<T>(
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
-    asyncFlags: AsyncFlags.None,
+    asyncFlags: AsyncFlags.Uninitialized,
     error: null,
     time: clock,
   };
@@ -162,7 +165,6 @@ export function asyncComputed<T>(
     onCleanup(() => (aborted = true));
 
     if (isPromise) {
-      setPending(self);
       result
         .then((v) => {
           if (aborted) return;
@@ -203,7 +205,7 @@ export function asyncComputed<T>(
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
-    asyncFlags: AsyncFlags.None,
+    asyncFlags: AsyncFlags.Uninitialized,
     error: null,
     time: clock,
   };
@@ -245,12 +247,8 @@ function setAsyncFlags<T>(
   signal.error = error;
 }
 
-function setPending<T>(signal: Signal<T>) {
-  setAsyncFlags(signal, AsyncFlags.Pending);
-}
-
 function setError<T>(signal: Signal<T>, error: Error) {
-  setAsyncFlags(signal, AsyncFlags.Error, error);
+  setAsyncFlags(signal, AsyncFlags.Error | AsyncFlags.Uninitialized, error);
 }
 
 function clearAsyncFlags<T>(signal: Signal<T>) {
@@ -278,7 +276,10 @@ function recompute<T>(el: Computed<T>, del: boolean) {
     clearAsyncFlags(el);
   } catch (e) {
     if (e instanceof NotReadyError) {
-      setPending(el);
+      setAsyncFlags(
+        el,
+        (prevAsyncFlags & ~AsyncFlags.Error) | AsyncFlags.Pending
+      );
     } else {
       setError(el, e as Error);
     }
@@ -450,8 +451,12 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
       }
     }
   }
+
   if (el.asyncFlags & AsyncFlags.Pending) {
-    throw new NotReadyError();
+    if (pendingCheck) pendingCheck.value = true;
+
+    if (!stale || el.asyncFlags & AsyncFlags.Uninitialized)
+      throw new NotReadyError();
   }
   if (el.asyncFlags & AsyncFlags.Error) {
     if (el.time < clock) {
@@ -537,4 +542,36 @@ function runDisposal<T>(node: Computed<T>): void {
   }
 
   node.disposal = null;
+}
+
+export function latest<T>(fn: () => T, fallback?: T): T {
+  const prevStale = stale;
+  stale = true;
+  let result: T;
+  try {
+    result = fn();
+  } catch (err) {
+    if (err instanceof NotReadyError && arguments.length > 1) {
+      return fallback as T;
+    }
+    throw err;
+  } finally {
+    stale = prevStale;
+  }
+  return result;
+}
+
+export function isPending(fn: () => any, fallback?: boolean): boolean {
+  const prevPendingCheck = pendingCheck;
+  pendingCheck = { value: false };
+  try {
+    latest(fn);
+    return pendingCheck.value;
+  } catch (e) {
+    if (!(e instanceof NotReadyError)) return false;
+    if (fallback !== undefined) return fallback!;
+    throw e;
+  } finally {
+    pendingCheck = prevPendingCheck;
+  }
 }
