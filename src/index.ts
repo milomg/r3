@@ -76,12 +76,13 @@ function deleteFromHeap(n: Computed<unknown>) {
   } else {
     const next = n.nextHeap;
     const dhh = dirtyHeap[height]!;
+    const end = next ?? dhh;
     if (n === dhh) {
       dirtyHeap[height] = next;
+    } else {
+      n.prevHeap.nextHeap = next;
     }
-    const end = next ?? dhh;
     end.prevHeap = n.prevHeap;
-    n.prevHeap.nextHeap = next;
   }
   n.prevHeap = n;
   n.nextHeap = undefined;

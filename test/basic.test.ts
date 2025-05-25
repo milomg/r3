@@ -185,3 +185,30 @@ test("should not run untracked inner effect", () => {
   setSignal(a, 0);
   stabilize();
 });
+
+test("should not run inner effect3", () => {
+  const a = signal(0);
+  const b = signal(0);
+
+  const order: string[] = [];
+  let iter = 0;
+  computed(function f1() {
+    order.push('outer')
+    read(a);
+
+    let myiter = iter++;
+    computed(function f2() {
+      order.push('inner')
+      read(b);
+    });
+  });
+
+  stabilize();
+  expect(order).toEqual(['outer', 'inner']);
+
+  setSignal(a, 2);
+  setSignal(b, 2);
+  stabilize();
+
+  expect(order).toEqual(['outer', 'inner', 'outer', 'inner']);
+});
