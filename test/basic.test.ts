@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { computed, read, setSignal, signal, stabilize } from "../src";
+import { computed, read, setSignal, Signal, signal, stabilize } from "../src";
 
 test("basic", () => {
   let aCount = 0;
@@ -211,4 +211,36 @@ test("should not run inner effect3", () => {
   stabilize();
 
   expect(order).toEqual(['outer', 'inner', 'outer', 'inner']);
+});
+
+test("firewall signals", () => {
+  const map = new Map<string, Signal<boolean>>();
+  const selected = signal("a");
+  let prev: string | null = null;
+  const selector = computed(() => {
+    if (prev) {
+      const s = map.get(prev);
+      if (s) {
+        setSignal(s, false);
+      }
+    }
+    prev = read(selected);
+    const s = map.get(prev);
+    if (s) setSignal(s, true);
+  });
+
+  const a = signal(true, selector);
+  map.set("a", a);
+  const b = signal(false, selector);
+  map.set("b", b);
+  const c = signal(false, selector);
+  map.set("c", c);
+
+  expect(a.value).toBe(true);
+
+  setSignal(selected, "b");
+  stabilize();
+
+  expect(a.value).toBe(false);
+  expect(b.value).toBe(true);
 });

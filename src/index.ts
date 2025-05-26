@@ -29,7 +29,7 @@ interface FirewallSignal<T> extends RawSignal<T> {
   nextChild: FirewallSignal<unknown> | null;
 }
 
-type Signal<T> = RawSignal<T> | FirewallSignal<T>;
+export type Signal<T> = RawSignal<T> | FirewallSignal<T>;
 
 export interface Computed<T> extends RawSignal<T> {
   deps: Link | null;
