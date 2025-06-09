@@ -162,18 +162,29 @@ export function asyncComputed<T>(
       return result as T;
     }
     let aborted = false;
-    onCleanup(() => (aborted = true));
+    const t = runningTransaction;
+    onCleanup(() => {
+      if (t === runningTransaction) aborted = true;
+    });
 
     if (isPromise) {
       result
         .then((v) => {
           if (aborted) return;
-          setSignal(self, v);
-          stabilize();
+          if (t) {
+            runTransaction(() => {
+              setSignal(self, v);
+              stabilize();
+            }, t);
+          } else {
+            setSignal(self, v);
+            stabilize();
+          }
         })
         .catch((e) => {
           if (aborted) return;
-          setError(self, e as Error);
+          self.asyncFlags = AsyncFlags.Error | AsyncFlags.Uninitialized;
+          self.error = e as Error;
           stabilize();
         });
     } else {
@@ -186,7 +197,8 @@ export function asyncComputed<T>(
           }
         } catch (error) {
           if (aborted) return;
-          setError(self, error as Error);
+          self.asyncFlags = AsyncFlags.Error | AsyncFlags.Uninitialized;
+          self.error = error as Error;
           stabilize();
         }
       })();
@@ -238,23 +250,6 @@ export function signal<T>(v: T): Signal<T> {
   return self;
 }
 
-function setAsyncFlags<T>(
-  signal: Signal<T>,
-  flags: AsyncFlags,
-  error: Error | null = null
-) {
-  signal.asyncFlags = flags;
-  signal.error = error;
-}
-
-function setError<T>(signal: Signal<T>, error: Error) {
-  setAsyncFlags(signal, AsyncFlags.Error | AsyncFlags.Uninitialized, error);
-}
-
-function clearAsyncFlags<T>(signal: Signal<T>) {
-  setAsyncFlags(signal, AsyncFlags.None);
-}
-
 function recompute<T>(el: Computed<T>, del: boolean) {
   if (del) {
     deleteFromHeap(el);
@@ -268,20 +263,32 @@ function recompute<T>(el: Computed<T>, del: boolean) {
   context = el;
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
+
   let value = el.value;
-  el.time = clock;
-  let prevAsyncFlags = el.asyncFlags;
+  let asyncFlags = el.asyncFlags;
+  let error = el.error;
+
   try {
     value = el.fn(value);
-    clearAsyncFlags(el);
+    asyncFlags = AsyncFlags.None;
+    error = null;
+
+    if (runningTransaction) {
+      runningTransaction.pending.delete(el);
+    }
   } catch (e) {
     if (e instanceof NotReadyError) {
-      setAsyncFlags(
-        el,
-        (prevAsyncFlags & ~AsyncFlags.Error) | AsyncFlags.Pending
-      );
+      asyncFlags = (el.asyncFlags & ~AsyncFlags.Error) | AsyncFlags.Pending;
+      error = null;
+      if (runningTransaction) {
+        runningTransaction.pending.add(el);
+      }
     } else {
-      setError(el, e as Error);
+      asyncFlags = AsyncFlags.Error | AsyncFlags.Uninitialized;
+      error = e as Error;
+      if (runningTransaction) {
+        runningTransaction.pending.delete(el);
+      }
     }
   }
   el.flags = ReactiveFlags.None;
@@ -301,10 +308,22 @@ function recompute<T>(el: Computed<T>, del: boolean) {
   }
 
   const valueChanged = value !== el.value;
-  const asyncFlagsChanged = el.asyncFlags !== prevAsyncFlags;
+  const asyncFlagsChanged = asyncFlags !== el.asyncFlags;
+  el.time = clock;
 
   if (valueChanged || asyncFlagsChanged) {
-    el.value = value;
+    if (runningTransaction) {
+      runningTransaction.nodes.set(el, {
+        value,
+        asyncFlags,
+        error: null,
+        time: clock,
+      });
+    } else {
+      el.value = value;
+      el.asyncFlags = asyncFlags;
+      el.error = error;
+    }
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
       const o = s.sub;
@@ -452,20 +471,37 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
     }
   }
 
-  if (el.asyncFlags & AsyncFlags.Pending) {
-    if (pendingCheck) pendingCheck.value = true;
+  if (runningTransaction) {
+    if (runningTransaction.nodes.has(el)) {
+      const tNode = runningTransaction.nodes.get(el)!;
+      if (tNode.asyncFlags & AsyncFlags.Pending) {
+        if (pendingCheck) pendingCheck.value = true;
 
-    if (!stale || el.asyncFlags & AsyncFlags.Uninitialized)
-      throw new NotReadyError();
-  }
-  if (el.asyncFlags & AsyncFlags.Error) {
-    if (el.time < clock) {
-      recompute(el as Computed<unknown>, false);
-      return read(el);
-    } else {
-      throw el.error;
+        if (!stale || tNode.asyncFlags & AsyncFlags.Uninitialized)
+          throw new NotReadyError();
+      }
+      if (tNode.asyncFlags & AsyncFlags.Error) {
+        throw tNode.error;
+      }
+      return tNode.value;
+    }
+  } else {
+    if (el.asyncFlags & AsyncFlags.Pending) {
+      if (pendingCheck) pendingCheck.value = true;
+
+      if (!stale || el.asyncFlags & AsyncFlags.Uninitialized)
+        throw new NotReadyError();
+    }
+    if (el.asyncFlags & AsyncFlags.Error) {
+      if (el.time < clock) {
+        recompute(el as Computed<unknown>, false);
+        return read(el);
+      } else {
+        throw el.error;
+      }
     }
   }
+
   return el.value;
 }
 
@@ -473,9 +509,23 @@ export function setSignal<T>(el: Signal<T>, v: T) {
   if (el.value === v && !el.asyncFlags) {
     return;
   }
-  el.value = v;
-  clearAsyncFlags(el);
-  el.time = clock;
+
+  if (runningTransaction) {
+    runningTransaction.clock.set(el, el.time);
+    runningTransaction.nodes.set(el, {
+      value: v,
+      asyncFlags: AsyncFlags.None,
+      error: null,
+      time: clock,
+    });
+    runningTransaction.pending.delete(el);
+  } else {
+    el.value = v;
+    el.asyncFlags = AsyncFlags.None;
+    el.error = null;
+    el.time = clock;
+  }
+
   for (let link = el.subs; link !== null; link = link.nextSub) {
     markedHeap = false;
     insertIntoHeap(link.sub);
@@ -510,6 +560,9 @@ export function stabilize() {
       recompute(el, false);
       el = next;
     }
+  }
+  if (runningTransaction) {
+    runningTransaction.commit();
   }
   clock++;
 }
@@ -574,4 +627,59 @@ export function isPending(fn: () => any, fallback?: boolean): boolean {
   } finally {
     pendingCheck = prevPendingCheck;
   }
+}
+
+type TransactionNode = {
+  value: any;
+  asyncFlags: AsyncFlags;
+  error: Error | null;
+  time: number;
+};
+export type Transaction = {
+  pending: Set<Signal<any>>;
+  nodes: Map<Signal<any>, TransactionNode>;
+  clock: Map<Signal<any>, number>;
+  commit: () => void;
+};
+let runningTransaction: Transaction | undefined;
+
+function runTransaction<T>(fn: () => T, t: Transaction): T {
+  const previousTransaction = runningTransaction;
+  runningTransaction = t;
+  try {
+    return fn();
+  } finally {
+    runningTransaction = previousTransaction;
+  }
+}
+
+export function createTransaction() {
+  const transaction: Transaction = {
+    pending: new Set(),
+    nodes: new Map(),
+    clock: new Map(),
+    commit,
+  };
+
+  function run<T>(fn: () => T): T {
+    return runTransaction(fn, transaction);
+  }
+
+  function commit() {
+    if (!transaction.pending.size) {
+      for (const [signal, clock] of transaction.clock) {
+        if (signal.time > clock) {
+          return;
+        }
+      }
+      transaction.nodes.forEach((node, signal) => {
+        signal.value = node.value;
+        signal.asyncFlags = node.asyncFlags;
+        signal.error = node.error;
+        signal.time = node.time;
+      });
+    }
+  }
+
+  return [run] as const;
 }
