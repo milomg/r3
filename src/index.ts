@@ -351,7 +351,11 @@ function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
     markNode(link.sub, ReactiveFlags.Check);
   }
   if (el.child !== null) {
-    for (let child: FirewallSignal<unknown>|null = el.child; child !== null; child = child.nextChild) {
+    for (
+      let child: FirewallSignal<unknown> | null = el.child;
+      child !== null;
+      child = child.nextChild
+    ) {
       for (let link = child.subs; link !== null; link = link.nextSub) {
         markNode(link.sub, ReactiveFlags.Check);
       }
@@ -409,4 +413,8 @@ function runDisposal(node: Computed<unknown>): void {
   }
 
   node.disposal = null;
+}
+
+export function getContext(): Computed<unknown> | null {
+  return context;
 }

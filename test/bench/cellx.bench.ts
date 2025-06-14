@@ -1,5 +1,12 @@
 import { bench } from "vitest";
-import { signal, computed, stabilize, read, Computed, setSignal } from "../../src";
+import {
+  signal,
+  computed,
+  stabilize,
+  read,
+  Computed,
+  setSignal,
+} from "../../src";
 import { batch, createMemo, createSignal } from "./queue";
 
 bench("cellx", () => {

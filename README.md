@@ -4,7 +4,7 @@
 
 ### why?
 
-Modern signals implementations in JavaScript are all implemented using push-pull-push and tri-coloring. However, this approach requires overeager marking of all recursive dependencies, making it impossible to make an `O(1)` implementation of `createSelector` or `createProjection` (which require marking only a subset of children based on the return value of a computation). 
+Modern signals implementations in JavaScript are all implemented using push-pull-push and tri-coloring. However, this approach requires overeager marking of all recursive dependencies, making it impossible to make an `O(1)` implementation of `createSelector` or `createProjection` (which require marking only a subset of children based on the return value of a computation).
 
 This library implements a different approach to reactivity using topological execution (height ordering).
 

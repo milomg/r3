@@ -55,7 +55,7 @@ export interface Computation<T> extends OwnerNode {
 
 function createRoot<T>(
   fn: (dispose: () => void) => T,
-  detachedOwner?: OwnerNode
+  detachedOwner?: OwnerNode,
 ): T {
   detachedOwner && (Owner = detachedOwner);
   const listener = Listener,
@@ -83,7 +83,7 @@ function createRoot<T>(
 
 function createSignal<T>(
   value: T,
-  options?: { equals?: (a: T, b: T) => boolean }
+  options?: { equals?: (a: T, b: T) => boolean },
 ): [() => T, (value: T | ((prev: T) => T)) => T] {
   options = options ? Object.assign({}, signalOptions, options) : signalOptions;
   const s: Signal<T> = {
@@ -110,7 +110,7 @@ function createComputed<T>(fn: (value?: T) => T, value?: T): void {
 function createMemo<T>(
   fn: (value?: T) => T,
   value?: T,
-  options?: { equals?: (a: T, b: T) => boolean }
+  options?: { equals?: (a: T, b: T) => boolean },
 ): () => T {
   options = options ? Object.assign({}, signalOptions, options) : signalOptions;
   const c: Computation<T> = createComputation(fn, value, true, 0);
@@ -158,7 +158,7 @@ function readSignal<T>(this: Signal<T> | Computation<T>): T {
 function writeSignal<T>(
   node: Signal<T> | Computation<T>,
   value: T,
-  isComp?: boolean
+  isComp?: boolean,
 ): T {
   if (node.comparator) {
     if (node.comparator(node.value, value)) return value;
@@ -212,7 +212,7 @@ function createComputation<T>(
   fn: (value?: T) => T,
   init: T | undefined,
   pure: boolean,
-  state: number = STALE
+  state: number = STALE,
 ): Computation<T> {
   const c: Computation<T> = {
     fn,

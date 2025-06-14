@@ -186,6 +186,43 @@ test("should not run untracked inner effect", () => {
   stabilize();
 });
 
+test("should not run untracked inner effect2", () => {
+  const a = signal(0);
+  const b = signal(0);
+
+  let f1c = 0;
+  let f2c = 0;
+  computed(function f1() {
+    f1c++;
+    const x = computed(function f2() {
+      f2c++;
+      read(b);
+      return read(a) == 0;
+    });
+    read(x);
+  });
+  stabilize();
+
+  expect(f1c).toBe(1);
+  expect(f2c).toBe(1);
+  setSignal(a, 2);
+  stabilize();
+
+  expect(f1c).toBe(2);
+  expect(f2c).toBe(3);
+
+  setSignal(a, 1);
+  stabilize();
+
+  expect(f1c).toBe(2);
+  expect(f2c).toBe(4);
+
+  setSignal(b, 1);
+  stabilize();
+  expect(f1c).toBe(2);
+  expect(f2c).toBe(5);
+});
+
 test("should not run inner effect3", () => {
   const a = signal(0);
   const b = signal(0);
@@ -193,24 +230,24 @@ test("should not run inner effect3", () => {
   const order: string[] = [];
   let iter = 0;
   computed(function f1() {
-    order.push('outer')
+    order.push("outer");
     read(a);
 
     let myiter = iter++;
     computed(function f2() {
-      order.push('inner')
+      order.push("inner");
       read(b);
     });
   });
 
   stabilize();
-  expect(order).toEqual(['outer', 'inner']);
+  expect(order).toEqual(["outer", "inner"]);
 
   setSignal(a, 2);
   setSignal(b, 2);
   stabilize();
 
-  expect(order).toEqual(['outer', 'inner', 'outer', 'inner']);
+  expect(order).toEqual(["outer", "inner", "outer", "inner"]);
 });
 
 test("firewall signals", () => {

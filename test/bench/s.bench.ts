@@ -12,7 +12,7 @@ bench("updateComputations1to4", () => {
   stabilize();
 
   for (let i = 0; i < 10000; i++) {
-    setSignal(a,i);
+    setSignal(a, i);
     stabilize();
   }
 });
