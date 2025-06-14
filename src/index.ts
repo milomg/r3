@@ -31,6 +31,12 @@ interface FirewallSignal<T> extends RawSignal<T> {
 
 export type Signal<T> = RawSignal<T> | FirewallSignal<T>;
 
+const initial = Symbol("INITIAL");
+type AsyncSignal<T> = Signal<Promise<T>> & {
+  loaded: Signal<T | typeof initial>;
+  loading: FirewallSignal<boolean>;
+};
+
 export interface Computed<T> extends RawSignal<T> {
   deps: Link | null;
   depsTail: Link | null;
@@ -128,6 +134,64 @@ export function computed<T>(fn: () => T): Computed<T> {
   return self;
 }
 
+export function asyncComputed<T>(
+  fn: (get: <U>(signal: Signal<U>) => U) => Promise<T>,
+): AsyncSignal<T> {
+  const self: Computed<Promise<T>> & AsyncSignal<T> = {
+    disposal: null,
+    fn: undefined as any,
+    value: undefined as any,
+    height: 0,
+    child: null,
+    nextHeap: undefined,
+    prevHeap: null as any,
+    loaded: signal(initial),
+    loading: null as any,
+    deps: null,
+    depsTail: null,
+    subs: null,
+    subsTail: null,
+    flags: ReactiveFlags.None,
+  };
+  self.loading = signal(true, self);
+  const get = <U>(s: Signal<U>): U => read(s, self);
+  self.fn = () => {
+    setSignal(self.loading, true); // firewall set
+    const p = fn(get);
+    p.then((v) => {
+      setSignal(self.loaded, v);
+      setSignal(self.loading, false);
+    });
+    return p;
+  };
+  self.prevHeap = self;
+  if (context) {
+    if (context.depsTail === null) {
+      self.height = context.height;
+      recompute(self, false);
+    } else {
+      self.height = context.height + 1;
+      insertIntoHeap(self);
+    }
+    link(self, context);
+  } else {
+    recompute(self, false);
+  }
+
+  return self;
+}
+
+export function readUpDefault<T>(x: AsyncSignal<T>, defaultValue: T): T {
+  const p = read(x.loaded);
+  return p === initial ? defaultValue : p;
+}
+
+export function readDownDefault<T>(x: AsyncSignal<T>, defaultValue: T): T {
+  return read(x.loading) ? readUpDefault(x, defaultValue) : defaultValue;
+}
+
+export function signal<T>(v: T, firewall: Computed<unknown>): FirewallSignal<T>;
+export function signal<T>(v: T): Signal<T>;
 export function signal<T>(
   v: T,
   firewall: Computed<unknown> | null = null,
@@ -312,15 +376,18 @@ function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
   return false;
 }
 
-export function read<T>(el: Signal<T> | Computed<T>): T {
-  if (context) {
-    link(el, context);
+export function read<T>(
+  el: Signal<T> | Computed<T>,
+  c: Computed<unknown> | null = context,
+): T {
+  if (c) {
+    link(el, c);
 
     const owner = "owner" in el ? el.owner : el;
     if ("fn" in owner) {
       const height = owner.height;
-      if (height >= context.height) {
-        context.height = height + 1;
+      if (height >= c.height) {
+        c.height = height + 1;
       }
       if (
         height >= minDirty ||
