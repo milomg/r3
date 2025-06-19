@@ -278,6 +278,7 @@ test("firewall signals height jump", () => {
   });
   const cOut = signal(c, cProjector);
   const xProjector = computed(() => {
+    projectionRuns++;
     const h = read(isHigh);
     if (isInit) {
       if (h) {
@@ -289,6 +290,7 @@ test("firewall signals height jump", () => {
   });
   const xOut = signal(aOut.value, xProjector);
   const nProjector = computed(() => {
+    projectionRuns++;
     const h = read(isHigh);
     if (isInit) {
       if (h) {
@@ -298,10 +300,10 @@ test("firewall signals height jump", () => {
       }
     }
   });
-  const nOut = signal(bOut.value, xProjector);
+  const nOut = signal(bOut.value, nProjector);
   isInit = true;
 
-  expect(projectionRuns).toBe(3);
+  expect(projectionRuns).toBe(5);
   expect(aOut.value).toBe(1);
   expect(bOut.value).toBe(2);
   expect(cOut.value).toBe(3);
@@ -312,7 +314,7 @@ test("firewall signals height jump", () => {
   setSignal(isHigh, true);
   stabilize();
 
-  expect(projectionRuns).toBe(6);
+  expect(projectionRuns).toBe(10);
   expect(aOut.value).toBe(3);
   expect(bOut.value).toBe(6);
   expect(cOut.value).toBe(10);
