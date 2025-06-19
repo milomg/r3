@@ -55,7 +55,7 @@ export function increaseHeapSize(n: number) {
 
 function insertIntoHeap(n: Computed<unknown>) {
   const flags = n.flags;
-  if (flags & ReactiveFlags.InHeap) return;
+  if (flags & (ReactiveFlags.InHeap | ReactiveFlags.RecomputingDeps)) return;
   n.flags = flags | ReactiveFlags.InHeap;
   const height = n.height;
   const heapAtHeight = dirtyHeap[height];
@@ -190,20 +190,41 @@ function recompute(el: Computed<unknown>, del: boolean) {
 }
 
 function updateIfNecessary(el: Computed<unknown>): void {
-  if (el.flags & ReactiveFlags.Check) {
-    for (let d = el.deps; d; d = d.nextDep) {
-      const dep = d.dep;
-      if ("fn" in dep) {
-        updateIfNecessary(dep);
-      }
-      if (el.flags & ReactiveFlags.Dirty) {
-        break;
-      }
+  // if (el.flags & ReactiveFlags.RecomputingDeps) {
+  //   return;
+  // }
+  // if (el.flags & ReactiveFlags.Dirty) {
+  //   recompute(el, true);
+  // } else if (el.flags & ReactiveFlags.InHeap) {
+  //   recompute(el, false);
+  // } else {
+  //   for (let d = el.deps; d; d = d.nextDep) {
+  //     const dep = d.dep;
+  //     // TODO why is this type assertion needed, seems like TS bug
+  //     const owner = ("owner" in dep ? dep.owner : dep) as Computed<unknown> | RawSignal<unknown>;
+  //     if ("fn" in owner) {
+  //       updateIfNecessary(owner);
+  //     }
+  //     if (el.flags & ReactiveFlags.Dirty) {
+  //       recompute(el, true);
+  //     }
+  //   }
+  // }
+  if (el.flags & ReactiveFlags.RecomputingDeps) {
+    return;
+  }
+  for (let d = el.deps; d; d = d.nextDep) {
+    const dep = d.dep;
+    // TODO why is this type assertion needed, seems like TS bug
+    const owner = ("owner" in dep ? dep.owner : dep) as Computed<unknown> | RawSignal<unknown>;
+    if ("fn" in owner) {
+      updateIfNecessary(owner);
     }
   }
-
   if (el.flags & ReactiveFlags.Dirty) {
     recompute(el, true);
+  } else if (el.flags & ReactiveFlags.InHeap) {
+    recompute(el, false);
   }
 
   el.flags = ReactiveFlags.None;
@@ -311,7 +332,6 @@ function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
 export function read<T>(el: Signal<T> | Computed<T>): T {
   if (context) {
     link(el, context);
-
     const owner = "owner" in el ? el.owner : el;
     if ("fn" in owner) {
       const height = owner.height;
@@ -364,7 +384,9 @@ export function stabilize() {
     dirtyHeap[minDirty] = undefined;
     while (el !== undefined) {
       const next = el.nextHeap;
-      recompute(el, false);
+      if (el.flags & ReactiveFlags.InHeap) {
+        recompute(el, false);
+      }
       el = next;
     }
   }
