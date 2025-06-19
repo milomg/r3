@@ -26,7 +26,6 @@ export interface RawSignal<T> {
 
 interface FirewallSignal<T> extends RawSignal<T> {
   owner: Computed<unknown>;
-  nextChild: FirewallSignal<unknown> | null;
 }
 
 export type Signal<T> = RawSignal<T> | FirewallSignal<T>;
@@ -40,7 +39,6 @@ export interface Computed<T> extends RawSignal<T> {
   prevHeap: Computed<unknown>;
   disposal: Disposable | Disposable[] | null;
   fn: () => T;
-  child: FirewallSignal<unknown> | null;
 }
 
 let markedHeap = false;
@@ -102,7 +100,6 @@ export function computed<T>(fn: () => T): Computed<T> {
     fn: fn,
     value: undefined as T,
     height: 0,
-    child: null,
     nextHeap: undefined,
     prevHeap: null as any,
     deps: null,
@@ -133,13 +130,12 @@ export function signal<T>(
   firewall: Computed<unknown> | null = null,
 ): Signal<T> {
   if (firewall !== null) {
-    return (firewall.child = {
+    return {
       value: v,
       subs: null,
       subsTail: null,
       owner: firewall,
-      nextChild: firewall.child,
-    });
+    };
   } else {
     return {
       value: v,
@@ -349,13 +345,6 @@ function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
   el.flags = flags | newState;
   for (let link = el.subs; link !== null; link = link.nextSub) {
     markNode(link.sub, ReactiveFlags.Check);
-  }
-  if (el.child !== null) {
-    for (let child: FirewallSignal<unknown>|null = el.child; child !== null; child = child.nextChild) {
-      for (let link = child.subs; link !== null; link = link.nextSub) {
-        markNode(link.sub, ReactiveFlags.Check);
-      }
-    }
   }
 }
 
