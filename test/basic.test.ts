@@ -277,29 +277,36 @@ test("firewall signals height jump", () => {
     }
   });
   const cOut = signal(c, cProjector);
+  const xProjector = computed(() => {
+    const h = read(isHigh);
+    if (isInit) {
+      if (h) {
+        setSignal(xOut, read(cOut));
+      } else {
+        setSignal(xOut, read(aOut));
+      }
+    }
+  });
+  const xOut = signal(aOut.value, xProjector);
+  const nProjector = computed(() => {
+    const h = read(isHigh);
+    if (isInit) {
+      if (h) {
+        setSignal(nOut, read(xOut));
+      } else {
+        setSignal(nOut, read(bOut));
+      }
+    }
+  });
+  const nOut = signal(bOut.value, xProjector);
   isInit = true;
-
-  const x = computed(() => {
-    if (read(isHigh)) {
-      return read(cOut);
-    } else {
-      return read(aOut);
-    }
-  });
-  const n = computed(() => {
-    if (read(isHigh)) {
-      return read(x);
-    } else {
-      return read(bOut);
-    }
-  });
 
   expect(projectionRuns).toBe(3);
   expect(aOut.value).toBe(1);
   expect(bOut.value).toBe(2);
   expect(cOut.value).toBe(3);
-  expect(x.value).toBe(1);
-  expect(n.value).toBe(2);
+  expect(xOut.value).toBe(1);
+  expect(nOut.value).toBe(2);
 
   setSignal(s, 1);
   setSignal(isHigh, true);
@@ -309,6 +316,40 @@ test("firewall signals height jump", () => {
   expect(aOut.value).toBe(3);
   expect(bOut.value).toBe(6);
   expect(cOut.value).toBe(10);
-  expect(x.value).toBe(10);
-  expect(n.value).toBe(10);
+  expect(xOut.value).toBe(10);
+  expect(nOut.value).toBe(10);
+});
+
+test("firewall signals height swap (transient cycle)", () => {
+  const isAHigh = signal(false);
+  let isInit = false;
+  let projectionRuns = 0;
+  const aProjector = computed(() => {
+    projectionRuns++;
+    const aH = read(isAHigh);
+    if (isInit) {
+      setSignal(aOut, aH ? read(bOut) : 1);
+    }
+  });
+  const aOut = signal(1, aProjector);
+  const bProjector = computed(() => {
+    projectionRuns++;
+    const aH = read(isAHigh);
+    if (isInit) {
+      setSignal(bOut, aH ? 2 : read(aOut));
+    }
+  });
+  const bOut = signal(1, bProjector);
+  isInit = true;
+
+  expect(projectionRuns).toBe(2);
+  expect(aOut.value).toBe(1);
+  expect(bOut.value).toBe(1);
+
+  setSignal(isAHigh, true);
+  stabilize();
+
+  expect(projectionRuns).toBe(4);
+  expect(aOut.value).toBe(2);
+  expect(bOut.value).toBe(2);
 });
