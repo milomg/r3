@@ -8,6 +8,7 @@ export const enum ReactiveFlags {
   Dirty = 1 << 1,
   RecomputingDeps = 1 << 2,
   InHeap = 1 << 3,
+  DidRunInFallback = 1 << 4,
 }
 
 export interface Link {
@@ -46,6 +47,7 @@ let context: Computed<unknown> | null = null;
 
 let minDirty = Infinity;
 let maxDirty = 0;
+let nextMaxDirty = 0;
 let contextHeight = 0;
 const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
@@ -57,7 +59,11 @@ export function increaseHeapSize(n: number) {
 function insertIntoHeap(n: Computed<unknown>) {
   const flags = n.flags;
   if (flags & (ReactiveFlags.InHeap | ReactiveFlags.RecomputingDeps)) return;
-  n.flags = flags | ReactiveFlags.InHeap;
+  if (flags & ReactiveFlags.Check) {
+    n.flags = (flags ^ ReactiveFlags.Check) | ReactiveFlags.InHeap;
+  } else {
+    n.flags = flags | ReactiveFlags.InHeap;
+  }
   const height = n.height;
   const heapAtHeight = dirtyHeap[height];
   if (heapAtHeight === undefined) {
@@ -70,6 +76,8 @@ function insertIntoHeap(n: Computed<unknown>) {
   }
   if (height > maxDirty) {
     maxDirty = height;
+  } else if (height <= minDirty) {
+    nextMaxDirty = height;
   }
 }
 
@@ -147,12 +155,7 @@ export function signal<T>(
 }
 
 function recompute(el: Computed<unknown>, del: boolean) {
-  if (del) {
-    deleteFromHeap(el);
-  } else {
-    el.nextHeap = undefined;
-    el.prevHeap = el;
-  }
+  deleteFromHeap(el);
 
   runDisposal(el);
   const oldContext = context;
@@ -177,7 +180,7 @@ function recompute(el: Computed<unknown>, del: boolean) {
       el.height = contextHeight;
     }
   }
-  el.flags &= ReactiveFlags.InHeap;
+  el.flags &= ReactiveFlags.InHeap | ReactiveFlags.DidRunInFallback;
   context = oldContext;
   contextHeight = oldWorkingHeight;
 
@@ -200,35 +203,58 @@ function recompute(el: Computed<unknown>, del: boolean) {
     }
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
-      const o = s.sub;
-      const flags = o.flags;
-      if (flags & ReactiveFlags.Check) {
-        o.flags = flags | ReactiveFlags.Dirty;
-      }
-      insertIntoHeap(o);
+      insertIntoHeap(s.sub);
     }
   }
 }
 
-function updateIfNecessary(el: Computed<unknown>): void {
-  if (el.flags & ReactiveFlags.RecomputingDeps) {
-    return;
-  }
-  for (let d = el.deps; d; d = d.nextDep) {
-    const dep = d.dep;
-    // TODO why is this type assertion needed, seems like TS bug
-    const owner = ("owner" in dep ? dep.owner : dep) as Computed<unknown> | RawSignal<unknown>;
-    if ("fn" in owner) {
-      updateIfNecessary(owner);
-    }
-  }
-  if (el.flags & ReactiveFlags.Dirty) {
-    recompute(el, true);
-  } else if (el.flags & ReactiveFlags.InHeap) {
-    recompute(el, false);
-  }
+const clearStabilizeStack: Computed<unknown>[] = [];
 
-  el.flags = ReactiveFlags.None;
+function updateIfNecessary(el: Computed<unknown>): void {
+  const linkStack: Link[] = [];
+  const computeStack: Computed<unknown>[] = [el];
+  let link = el.deps ?? undefined;
+  let node: Signal<unknown> | Computed<unknown> | undefined;
+  while (link) {
+    while (link) {
+      node = link.dep;
+      node = ("owner" in node ? node.owner : node) as Computed<unknown> | RawSignal<unknown>;
+      const next: Link | undefined = link.nextDep ?? undefined;
+      if ("fn" in node) {
+        if (
+          node.height < minDirty ||
+          node.flags & (ReactiveFlags.RecomputingDeps | ReactiveFlags.DidRunInFallback)
+        ) {
+          link = next;
+          continue;
+        }
+        node.flags |= ReactiveFlags.DidRunInFallback;
+        clearStabilizeStack.push(node);
+        computeStack.push(node);
+
+        if (node.deps) {
+          link = node.deps;
+          if (next) {
+            linkStack.push(next);
+          }
+          continue;
+        }
+      }
+      link = next;
+    }
+    link = linkStack.pop();
+    for (let i = computeStack.length - 1; i >= 0; i--) {
+      const node = computeStack[i];
+      if (node.flags & ReactiveFlags.Dirty) {
+        recompute(node, true);
+      } else if (node.flags & ReactiveFlags.InHeap) {
+        recompute(node, false);
+      } else {
+        el.flags &= ReactiveFlags.InHeap | ReactiveFlags.DidRunInFallback;
+      }
+    }
+    computeStack.length = 0;
+  }
 }
 
 // https://github.com/stackblitz/alien-signals/blob/v2.0.3/src/system.ts#L100
@@ -370,7 +396,13 @@ export function stabilize() {
       el = next;
     }
   }
+  for (let i = clearStabilizeStack.length - 1; i >= 0; i--) {
+    clearStabilizeStack[i].flags ^= ReactiveFlags.DidRunInFallback;
+  }
+  clearStabilizeStack.length = 0;
   minDirty = Infinity;
+  maxDirty = nextMaxDirty;
+  nextMaxDirty = 0;
 }
 
 export function onCleanup(fn: Disposable): Disposable {
