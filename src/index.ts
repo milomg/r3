@@ -44,7 +44,7 @@ export interface Computed<T> extends RawSignal<T> {
 
 let context: Computed<unknown> | null = null;
 
-let minDirty = 0;
+let minDirty = Infinity;
 let maxDirty = 0;
 let contextHeight = 0;
 const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
@@ -168,8 +168,16 @@ function recompute(el: Computed<unknown>, del: boolean) {
   } catch {
     didNotError = false;
   }
-  el.flags = ReactiveFlags.None;
-  el.height = contextHeight;
+  if (el.height < contextHeight) {
+    if (el.flags & ReactiveFlags.InHeap) {
+      deleteFromHeap(el);
+      el.height = contextHeight;
+      insertIntoHeap(el);
+    } else {
+      el.height = contextHeight;
+    }
+  }
+  el.flags &= ReactiveFlags.InHeap;
   context = oldContext;
   contextHeight = oldWorkingHeight;
 
@@ -362,6 +370,7 @@ export function stabilize() {
       el = next;
     }
   }
+  minDirty = Infinity;
 }
 
 export function onCleanup(fn: Disposable): Disposable {

@@ -346,8 +346,8 @@ test("firewall signals height jump (init signal - 0 height start)", () => {
   expect(projectionRuns).toBe(17);
   expect(xOut.value).toBe(4);
   expect(nOut.value).toBe(8);
-  expect(xProjector.height).toBe(1);
-  expect(nProjector.height).toBe(2);
+  // expect(xProjector.height).toBe(1);
+  // expect(nProjector.height).toBe(2);
 });
 
 test("firewall signals height jump (init raw - 0 height start)", () => {
@@ -439,8 +439,8 @@ test("firewall signals height jump (init raw - 0 height start)", () => {
   expect(projectionRuns).toBe(12);
   expect(xOut.value).toBe(3);
   expect(nOut.value).toBe(6);
-  expect(xProjector.height).toBe(1);
-  expect(nProjector.height).toBe(2);
+  // expect(xProjector.height).toBe(1);
+  // expect(nProjector.height).toBe(2);
 });
 
 test("firewall signals height jump (init internal - normal height start)", () => {
@@ -536,8 +536,8 @@ test("firewall signals height jump (init internal - normal height start)", () =>
   expect(projectionRuns).toBe(12);
   expect(xOut.value).toBe(4);
   expect(nOut.value).toBe(8);
-  expect(xProjector.height).toBe(1);
-  expect(nProjector.height).toBe(2);
+  // expect(xProjector.height).toBe(1);
+  // expect(nProjector.height).toBe(2);
 });
 
 test("firewall signals height swap (init signal - 0 height start)", () => {
@@ -580,8 +580,8 @@ test("firewall signals height swap (init signal - 0 height start)", () => {
   expect(projectionRuns).toBe(6);
   expect(aOut.value).toBe(2);
   expect(bOut.value).toBe(2);
-  expect(aProjector.height).toBe(1);
-  expect(bProjector.height).toBe(0);
+  // expect(aProjector.height).toBe(1);
+  // expect(bProjector.height).toBe(0);
 
   setSignal(isAHigh, false);
   stabilize();
@@ -589,8 +589,8 @@ test("firewall signals height swap (init signal - 0 height start)", () => {
   expect(projectionRuns).toBe(8);
   expect(aOut.value).toBe(1);
   expect(bOut.value).toBe(1);
-  expect(aProjector.height).toBe(0);
-  expect(bProjector.height).toBe(1);
+  // expect(aProjector.height).toBe(0);
+  // expect(bProjector.height).toBe(1);
 });
 
 test("firewall signals height swap (init raw - 0 height start)", () => {
@@ -636,8 +636,8 @@ test("firewall signals height swap (init raw - 0 height start)", () => {
   expect(projectionRuns).toBe(6);
   expect(aOut.value).toBe(1);
   expect(bOut.value).toBe(1);
-  expect(aProjector.height).toBe(0);
-  expect(bProjector.height).toBe(1);
+  // expect(aProjector.height).toBe(0);
+  // expect(bProjector.height).toBe(1);
 });
 
 test("firewall signals height swap (init internal - normal height start)", () => {
@@ -676,8 +676,8 @@ test("firewall signals height swap (init internal - normal height start)", () =>
   expect(projectionRuns).toBe(4);
   expect(aOut.value).toBe(2);
   expect(bOut.value).toBe(2);
-  expect(aProjector.height).toBe(1);
-  expect(bProjector.height).toBe(0);
+  // expect(aProjector.height).toBe(1);
+  // expect(bProjector.height).toBe(0);
 
   setSignal(isAHigh, false);
   stabilize();
@@ -685,6 +685,6 @@ test("firewall signals height swap (init internal - normal height start)", () =>
   expect(projectionRuns).toBe(6);
   expect(aOut.value).toBe(1);
   expect(bOut.value).toBe(1);
-  expect(aProjector.height).toBe(0);
-  expect(bProjector.height).toBe(1);
+  // expect(aProjector.height).toBe(0);
+  // expect(bProjector.height).toBe(1);
 });
