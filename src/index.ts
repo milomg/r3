@@ -26,7 +26,6 @@ export interface RawSignal<T> {
 
 interface FirewallSignal<T> extends RawSignal<T> {
   owner: Computed<unknown>;
-  nextChild: FirewallSignal<unknown> | null;
 }
 
 export type Signal<T> = RawSignal<T> | FirewallSignal<T>;
@@ -35,19 +34,19 @@ export interface Computed<T> extends RawSignal<T> {
   deps: Link | null;
   depsTail: Link | null;
   flags: ReactiveFlags;
+  context: Computed<unknown> | null;
   height: number;
   nextHeap: Computed<unknown> | undefined;
   prevHeap: Computed<unknown>;
   disposal: Disposable | Disposable[] | null;
   fn: () => T;
-  child: FirewallSignal<unknown> | null;
 }
 
-let markedHeap = false;
 let context: Computed<unknown> | null = null;
 
-let minDirty = 0;
+let minDirty = Infinity;
 let maxDirty = 0;
+let contextHeight = 0;
 const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
   if (n > dirtyHeap.length) {
@@ -57,7 +56,7 @@ export function increaseHeapSize(n: number) {
 
 function insertIntoHeap(n: Computed<unknown>) {
   const flags = n.flags;
-  if (flags & ReactiveFlags.InHeap) return;
+  if (flags & (ReactiveFlags.InHeap | ReactiveFlags.RecomputingDeps)) return;
   n.flags = flags | ReactiveFlags.InHeap;
   const height = n.height;
   const heapAtHeight = dirtyHeap[height];
@@ -102,7 +101,6 @@ export function computed<T>(fn: () => T): Computed<T> {
     fn: fn,
     value: undefined as T,
     height: 0,
-    child: null,
     nextHeap: undefined,
     prevHeap: null as any,
     deps: null,
@@ -110,14 +108,14 @@ export function computed<T>(fn: () => T): Computed<T> {
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
+    context,
   };
   self.prevHeap = self;
   if (context) {
+    self.height = contextHeight + 1;
     if (context.depsTail === null) {
-      self.height = context.height;
       recompute(self, false);
     } else {
-      self.height = context.height + 1;
       insertIntoHeap(self);
     }
     link(self, context);
@@ -133,13 +131,12 @@ export function signal<T>(
   firewall: Computed<unknown> | null = null,
 ): Signal<T> {
   if (firewall !== null) {
-    return (firewall.child = {
+    return {
       value: v,
       subs: null,
       subsTail: null,
       owner: firewall,
-      nextChild: firewall.child,
-    });
+    };
   } else {
     return {
       value: v,
@@ -158,13 +155,31 @@ function recompute(el: Computed<unknown>, del: boolean) {
   }
 
   runDisposal(el);
-  const oldcontext = context;
+  const oldContext = context;
+  const oldWorkingHeight = contextHeight;
+  contextHeight = el.context ? el.context.height + 1 : 0;
   context = el;
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
-  const value = el.fn();
-  el.flags = ReactiveFlags.None;
-  context = oldcontext;
+  let didNotError = true;
+  let value;
+  try {
+    value = el.fn();
+  } catch {
+    didNotError = false;
+  }
+  if (el.height < contextHeight) {
+    if (el.flags & ReactiveFlags.InHeap) {
+      deleteFromHeap(el);
+      el.height = contextHeight;
+      insertIntoHeap(el);
+    } else {
+      el.height = contextHeight;
+    }
+  }
+  el.flags &= ReactiveFlags.InHeap;
+  context = oldContext;
+  contextHeight = oldWorkingHeight;
 
   const depsTail = el.depsTail as Link | null;
   let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
@@ -180,7 +195,9 @@ function recompute(el: Computed<unknown>, del: boolean) {
   }
 
   if (value !== el.value) {
-    el.value = value;
+    if (didNotError) {
+      el.value = value;
+    }
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
       const o = s.sub;
@@ -194,20 +211,21 @@ function recompute(el: Computed<unknown>, del: boolean) {
 }
 
 function updateIfNecessary(el: Computed<unknown>): void {
-  if (el.flags & ReactiveFlags.Check) {
-    for (let d = el.deps; d; d = d.nextDep) {
-      const dep = d.dep;
-      if ("fn" in dep) {
-        updateIfNecessary(dep);
-      }
-      if (el.flags & ReactiveFlags.Dirty) {
-        break;
-      }
+  if (el.flags & ReactiveFlags.RecomputingDeps) {
+    return;
+  }
+  for (let d = el.deps; d; d = d.nextDep) {
+    const dep = d.dep;
+    // TODO why is this type assertion needed, seems like TS bug
+    const owner = ("owner" in dep ? dep.owner : dep) as Computed<unknown> | RawSignal<unknown>;
+    if ("fn" in owner) {
+      updateIfNecessary(owner);
     }
   }
-
   if (el.flags & ReactiveFlags.Dirty) {
     recompute(el, true);
+  } else if (el.flags & ReactiveFlags.InHeap) {
+    recompute(el, false);
   }
 
   el.flags = ReactiveFlags.None;
@@ -315,19 +333,17 @@ function isValidLink(checkLink: Link, sub: Computed<unknown>): boolean {
 export function read<T>(el: Signal<T> | Computed<T>): T {
   if (context) {
     link(el, context);
-
     const owner = "owner" in el ? el.owner : el;
     if ("fn" in owner) {
-      const height = owner.height;
-      if (height >= context.height) {
-        context.height = height + 1;
-      }
       if (
-        height >= minDirty ||
+        owner.height >= minDirty ||
         owner.flags & (ReactiveFlags.Dirty | ReactiveFlags.Check)
       ) {
-        markHeap();
         updateIfNecessary(owner);
+      }
+      const height = owner.height;
+      if (height >= contextHeight) {
+        contextHeight = height + 1;
       }
     }
   }
@@ -338,34 +354,7 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
   if (el.value === v) return;
   el.value = v;
   for (let link = el.subs; link !== null; link = link.nextSub) {
-    markedHeap = false;
     insertIntoHeap(link.sub);
-  }
-}
-
-function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
-  const flags = el.flags;
-  if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState) return;
-  el.flags = flags | newState;
-  for (let link = el.subs; link !== null; link = link.nextSub) {
-    markNode(link.sub, ReactiveFlags.Check);
-  }
-  if (el.child !== null) {
-    for (let child: FirewallSignal<unknown>|null = el.child; child !== null; child = child.nextChild) {
-      for (let link = child.subs; link !== null; link = link.nextSub) {
-        markNode(link.sub, ReactiveFlags.Check);
-      }
-    }
-  }
-}
-
-function markHeap() {
-  if (markedHeap) return;
-  markedHeap = true;
-  for (let i = 0; i <= maxDirty; i++) {
-    for (let el = dirtyHeap[i]; el !== undefined; el = el.nextHeap) {
-      markNode(el);
-    }
   }
 }
 
@@ -375,10 +364,13 @@ export function stabilize() {
     dirtyHeap[minDirty] = undefined;
     while (el !== undefined) {
       const next = el.nextHeap;
-      recompute(el, false);
+      if (el.flags & ReactiveFlags.InHeap) {
+        recompute(el, false);
+      }
       el = next;
     }
   }
+  minDirty = Infinity;
 }
 
 export function onCleanup(fn: Disposable): Disposable {
