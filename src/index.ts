@@ -34,6 +34,7 @@ export interface Computed<T> extends RawSignal<T> {
   deps: Link | null;
   depsTail: Link | null;
   flags: ReactiveFlags;
+  context: Computed<unknown> | null;
   height: number;
   nextHeap: Computed<unknown> | undefined;
   prevHeap: Computed<unknown>;
@@ -41,11 +42,11 @@ export interface Computed<T> extends RawSignal<T> {
   fn: () => T;
 }
 
-let markedHeap = false;
 let context: Computed<unknown> | null = null;
 
 let minDirty = 0;
 let maxDirty = 0;
+let contextHeight = 0;
 const dirtyHeap: (Computed<unknown> | undefined)[] = new Array(2000);
 export function increaseHeapSize(n: number) {
   if (n > dirtyHeap.length) {
@@ -107,14 +108,14 @@ export function computed<T>(fn: () => T): Computed<T> {
     subs: null,
     subsTail: null,
     flags: ReactiveFlags.None,
+    context,
   };
   self.prevHeap = self;
   if (context) {
+    self.height = contextHeight + 1;
     if (context.depsTail === null) {
-      self.height = context.height;
       recompute(self, false);
     } else {
-      self.height = context.height + 1;
       insertIntoHeap(self);
     }
     link(self, context);
@@ -154,13 +155,23 @@ function recompute(el: Computed<unknown>, del: boolean) {
   }
 
   runDisposal(el);
-  const oldcontext = context;
+  const oldContext = context;
+  const oldWorkingHeight = contextHeight;
+  contextHeight = el.context ? el.context.height + 1 : 0;
   context = el;
   el.depsTail = null;
   el.flags = ReactiveFlags.RecomputingDeps;
-  const value = el.fn();
+  let didNotError = true;
+  let value;
+  try {
+    value = el.fn();
+  } catch {
+    didNotError = false;
+  }
   el.flags = ReactiveFlags.None;
-  context = oldcontext;
+  el.height = contextHeight;
+  context = oldContext;
+  contextHeight = oldWorkingHeight;
 
   const depsTail = el.depsTail as Link | null;
   let toRemove = depsTail !== null ? depsTail.nextDep : el.deps;
@@ -176,7 +187,9 @@ function recompute(el: Computed<unknown>, del: boolean) {
   }
 
   if (value !== el.value) {
-    el.value = value;
+    if (didNotError) {
+      el.value = value;
+    }
 
     for (let s = el.subs; s !== null; s = s.nextSub) {
       const o = s.sub;
@@ -190,26 +203,6 @@ function recompute(el: Computed<unknown>, del: boolean) {
 }
 
 function updateIfNecessary(el: Computed<unknown>): void {
-  // if (el.flags & ReactiveFlags.RecomputingDeps) {
-  //   return;
-  // }
-  // if (el.flags & ReactiveFlags.Dirty) {
-  //   recompute(el, true);
-  // } else if (el.flags & ReactiveFlags.InHeap) {
-  //   recompute(el, false);
-  // } else {
-  //   for (let d = el.deps; d; d = d.nextDep) {
-  //     const dep = d.dep;
-  //     // TODO why is this type assertion needed, seems like TS bug
-  //     const owner = ("owner" in dep ? dep.owner : dep) as Computed<unknown> | RawSignal<unknown>;
-  //     if ("fn" in owner) {
-  //       updateIfNecessary(owner);
-  //     }
-  //     if (el.flags & ReactiveFlags.Dirty) {
-  //       recompute(el, true);
-  //     }
-  //   }
-  // }
   if (el.flags & ReactiveFlags.RecomputingDeps) {
     return;
   }
@@ -334,16 +327,15 @@ export function read<T>(el: Signal<T> | Computed<T>): T {
     link(el, context);
     const owner = "owner" in el ? el.owner : el;
     if ("fn" in owner) {
-      const height = owner.height;
-      if (height >= context.height) {
-        context.height = height + 1;
-      }
       if (
-        height >= minDirty ||
+        owner.height >= minDirty ||
         owner.flags & (ReactiveFlags.Dirty | ReactiveFlags.Check)
       ) {
-        markHeap();
         updateIfNecessary(owner);
+      }
+      const height = owner.height;
+      if (height >= contextHeight) {
+        contextHeight = height + 1;
       }
     }
   }
@@ -354,27 +346,7 @@ export function setSignal(el: Signal<unknown>, v: unknown) {
   if (el.value === v) return;
   el.value = v;
   for (let link = el.subs; link !== null; link = link.nextSub) {
-    markedHeap = false;
     insertIntoHeap(link.sub);
-  }
-}
-
-function markNode(el: Computed<unknown>, newState = ReactiveFlags.Dirty) {
-  const flags = el.flags;
-  if ((flags & (ReactiveFlags.Check | ReactiveFlags.Dirty)) >= newState) return;
-  el.flags = flags | newState;
-  for (let link = el.subs; link !== null; link = link.nextSub) {
-    markNode(link.sub, ReactiveFlags.Check);
-  }
-}
-
-function markHeap() {
-  if (markedHeap) return;
-  markedHeap = true;
-  for (let i = 0; i <= maxDirty; i++) {
-    for (let el = dirtyHeap[i]; el !== undefined; el = el.nextHeap) {
-      markNode(el);
-    }
   }
 }
 
