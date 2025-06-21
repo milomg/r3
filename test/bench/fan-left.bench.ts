@@ -3,7 +3,7 @@ import { signal, computed, stabilize, read, Computed, setSignal, Signal } from "
 
 const FAN_DOWN_SIZE = 200;
 
-bench("fan down", () => {
+bench("fan left", () => {
   const isHigh = signal(false);
   const s = signal(0);
   const aItems: Computed<number>[] = [];
